@@ -1,0 +1,57 @@
+[PCOMM SCRIPT HEADER]
+LANGUAGE=VBSCRIPT
+DESCRIPTION=
+[PCOMM SCRIPT SOURCE]
+OPTION EXPLICIT
+autECLSession.SetConnectionByName(ThisSessionName)
+
+Dim File
+Set File = New FileClass
+
+Employee
+sub Employee()
+   Dim objShell, applicationFilePath, lines, macro
+   Set objShell = CreateObject("WScript.Shell")
+   applicationFilePath = File.buildPath("employee\employee.exe")
+   objShell.Run """" + applicationFilePath + """", 1, True
+end sub
+
+Class FileClass
+
+   public function buildPath(name)
+      dim textFilePath, fso, currentDirectory
+      Set fso = CreateObject("Scripting.FileSystemObject")
+      currentDirectory = fso.GetAbsolutePathName(".")
+      textFilePath = fso.BuildPath(currentDirectory, name)
+      buildPath = textFilePath
+   end function
+
+   public function write(filePath, string)
+      Dim objFSO, objFile
+      Set objFSO = CreateObject("Scripting.FileSystemObject")
+
+      Set objFile = objFSO.CreateTextFile(filePath, True)
+
+      objFile.Write(string)
+
+      objFile.Close
+
+      Set objFile = Nothing
+      Set objFSO = Nothing
+   end function
+
+   public function read(filePath)
+      Dim objFSO, objTextFile, strContents
+
+      Set objFSO = CreateObject("Scripting.FileSystemObject")
+      Set objTextFile = objFSO.OpenTextFile(filePath, 1)
+
+      strContents = objTextFile.ReadAll
+
+      objTextFile.Close
+      Set objTextFile = Nothing
+      Set objFSO = Nothing
+      read = strContents
+   end function
+
+End Class

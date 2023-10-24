@@ -1,0 +1,98 @@
+[PCOMM SCRIPT HEADER]
+LANGUAGE=VBSCRIPT
+DESCRIPTION=
+[PCOMM SCRIPT SOURCE]
+OPTION EXPLICIT
+autECLSession.SetConnectionByName(ThisSessionName)
+
+
+
+Dim Screen
+Set Screen = New ScreenClass
+Dim Input
+Set Input = new InputClass
+
+logOut
+
+sub logOut()
+    autECLSession.autECLOIA.WaitForAppAvailable
+    autECLSession.autECLOIA.WaitForInputReady
+    if Screen.check(34, 3, "CMS Main Menu") Then
+        Input.setCursor 7, 20
+        Input.text("90")
+        Input.key("[enter]")
+    else
+        MsgBox("Please start on the CMS Main Menu")
+    end if
+end sub
+
+Class ScreenClass
+
+    public function check(startRow, startCol, string)
+       if text(startRow, startCol, Len(string)) = string Then
+             check = true
+       else
+             check = false
+       end if
+    end function
+
+    public function text(startRow, startCol, length)
+       autECLSession.autECLOIA.WaitForInputReady
+       text = Mid(autECLSession.autECLPS.GetText(), (startCol - 1) * 80 + startRow, length)
+    end function
+
+ end Class
+
+ Class InputClass
+
+    public function chop(str, maxLength)
+       if Len(str) < maxLength Then
+          key("[fldext]")
+       end if
+    end function
+
+    public function text(string)
+       Dim strIndex
+       For strIndex = 1 To Len(string)
+             key Mid(string, strIndex, 1)
+       Next
+    end function
+
+    public function key(action)
+       autECLSession.autECLOIA.WaitForInputReady
+       autECLSession.autECLPS.SendKeys action
+    end function
+
+    public function setCursor(col, row)
+       autECLSession.autECLOIA.WaitForInputReady
+       Dim curcol, correctionCol
+       Dim currow, correctionRow
+       curcol = autECLSession.autECLPS.CursorPosCol
+       currow = autECLSession.autECLPS.CursorPosRow
+       correctionCol = col - curcol
+       correctionRow = row - currow
+       dim i
+       i = 0
+       if correctionCol > 0 Then
+             for i = 1 to correctionCol
+                key("[right]")
+             next
+       else
+             for i = 1 to correctionCol * -1
+                key("[left]")
+             next
+       end if
+
+       i = 0
+       if correctionRow > 0 Then
+             for i = 1 to correctionRow
+                key("[down]")
+                next
+             else
+             for i = 1 to correctionRow * -1
+                key("[up]")
+             next
+       end if
+    end function
+
+ end Class

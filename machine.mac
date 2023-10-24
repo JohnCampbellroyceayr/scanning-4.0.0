@@ -1,0 +1,1579 @@
+[PCOMM SCRIPT HEADER]
+LANGUAGE=VBSCRIPT
+DESCRIPTION=
+[PCOMM SCRIPT SOURCE]
+OPTION EXPLICIT
+autECLSession.SetConnectionByName(ThisSessionName)
+
+'declare classes
+   Dim File
+   Set File = New FileClass
+   Dim Screen
+   Set Screen = New ScreenClass
+   Dim Input
+   Set Input = New InputClass
+   Dim Commands
+   Set Commands = New CommandClass
+   Dim machineMacrotxtFile, machineValuestxtFile, employeeValuestxtFile
+   machineMacrotxtFile = "local files\machine\machine-data-macro.txt"
+   machineValuestxtFile = "local files\machine\machine.txt"
+   employeeValuestxtFile = "local files\employee\employee.txt"
+   Dim applicationOpen
+   applicationOpen = false
+setUpMacro
+sub setUpMacro()
+   autECLSession.autECLOIA.WaitForAppAvailable
+   autECLSession.autECLOIA.WaitForInputReady
+   if Screen.check(34, 3, "CMS Main Menu") Then
+      Input.setCursor 7, 20
+      Machine()
+   else
+      MsgBox("Please start on the CMS Main Menu")
+   end if
+end sub
+
+
+sub Machine()
+   Dim objShell, applicationFilePath, lines, macro
+   if applicationOpen <> true Then
+      Set objShell = CreateObject("WScript.Shell")
+      applicationFilePath = File.buildPath("machine/machine.exe")
+      objShell.Run """" + applicationFilePath + """"
+      applicationOpen = true
+      File.write File.buildPath("local files/machine/machine-go.txt"), ""
+   end if
+   
+   File.write File.buildPath("local files/machine/machine-data-macro.txt"), "Macro" + vbTab + "null"
+   waitIntilChanged()
+
+   lines = Split(File.read(File.buildPath(machineMacrotxtFile)), vbLf)
+   macro = Split(lines(0), vbtab)
+   ' macro(1) = Replace(Trim(macro(1)), vbCrLf, "")
+   
+   Dim opSuccessful
+   opSuccessful = false
+   
+   if Trim(macro(1)) <> "null" Then
+      File.write File.buildPath("local files/machine/machine-go.txt"), "Working"
+      select case true
+         case CompareStrings("Start Shift", macro(1))
+            startShiftMachine()
+         case CompareStrings("Setup", macro(1))
+            setup()
+         case CompareStrings("Run", macro(1))
+            run()
+         case CompareStrings("Pause", macro(1))
+            pause()
+         case CompareStrings("Resume", macro(1))
+            play()
+         case CompareStrings("GoodPieces", macro(1))
+            goodPieces lines(1), lines(2)
+         case CompareStrings("Scrap", macro(1))
+            scrap lines(1), lines(2), lines(3)
+         case CompareStrings("CheckWorkOrder", macro(1))
+            checkWorkOrder lines(1), lines(2)
+            Machine()
+            exit sub
+         case CompareStrings("EndShift", macro(1))
+            endShift lines(1)
+         case else
+      end select
+      Dim arr
+      arr = Split(File.read(File.buildPath("local files/machine/machine-go.txt")), "|")
+      if UBound(arr) = -1 or (arr(0) <> "Error" And arr(0) <> "waitforinput") Then
+         File.write File.buildPath("local files/machine/machine-go.txt"), "Success"
+      else
+         if Split(File.read(File.buildPath("local files/machine/machine-go.txt")), "|")(0) = "waitforinput" Then
+            waitIntilChanged()
+            if Split(File.read(File.buildPath("local files/machine/machine-go.txt")), "|")(0) = "RunAgain" Then
+               Machine()
+               exit sub
+            end if
+         end if
+      end if
+   else
+      ' File.write File.buildPath("local files/machine/machine-go.txt"), "Error|no program to run found"
+   end if
+end sub
+
+Function CustomSleep(milliseconds)
+   Dim start
+    start = Timer
+    While Timer - start < milliseconds / 1000
+        ' Do nothing, just wait
+    Wend
+End Function
+
+Function waitIntilChanged()
+   Dim filePathTemp
+   filePathTemp = File.buildPath("local files/machine/machine-go.txt")
+   Dim text
+   text = Trim(File.read(filePathTemp))
+
+   Dim count
+   count = 3600
+
+   Do While count > 0
+         count = count - 1
+         if Trim(File.read(filePathTemp)) <> text Then
+            exit Do
+         end if
+      CustomSleep 1000 ' Pause for 1 second
+   Loop
+End Function
+
+Function CompareStrings(inputString, checkString)
+    Dim inputSubstring, checkSubstring, numChars
+    numChars = Len(inputString)
+    inputSubstring = Left(inputString, numChars)
+    checkSubstring = Left(checkString, numChars)
+    
+    If StrComp(inputSubstring, checkSubstring, vbTextCompare) = 0 Then
+        CompareStrings = True
+    Else
+        CompareStrings = False
+    End If
+End Function
+
+sub checkWorkOrder(orderStr, seqStr)
+   Dim order, seq
+   Dim values
+
+   Dim MachineValues, Machine
+   MachineValues = File.read(machineValuestxtFile)
+   set Machine = getMachineValues(MachineValues)
+
+   order = Trim(Split(orderStr, vbtab)(1))
+   seq = Trim(Split(seqStr, vbtab)(1))
+   if seq = "" or CompareStrings("null", seq) Then
+      if logInSequence() And enterWO(order) Then
+         values = findSeqValuesNoReport(Replace(Machine("Machine"), "-", " "))
+         File.write File.buildPath("local files/machine/machine-go.txt"), "checkOrder|" + values
+         logOut 3, 3
+         exit sub
+      end if
+   else
+      
+      if logInSequence() And enterWO(order) Then
+         if findSeq(seq, Machine("Machine"), Machine("MachineGroup")) Then
+            values = findSeqValues(Replace(Machine("Machine"), "-", " "))
+            File.write File.buildPath("local files/machine/machine-go.txt"), "checkOrder|" + values
+            logOut 3, 3
+            exit sub
+         end if
+      end if
+
+   end if
+   File.write File.buildPath("local files/machine/machine-go.txt"), "checkOrder|false"
+   logOut 3, 3
+end sub
+
+function enterWO(order)
+   Input.text(order)
+   Input.chop order, 10
+   Input.key("[enter]")
+   Input.key("[pf1]")
+
+   if CompareStrings(Trim(Screen.text(42, 17, 10)), order) And Trim(Screen.text(42, 17, 10)) <> "" Then
+      Input.key("[enter]")
+      enterWO = true
+   end if
+end function
+
+function findSeq(seq, machine, currentMachineGroup)
+   Input.setCursor 13, 21
+   Input.text(seq)
+   Input.chop seq, 3
+   Input.key("[enter]")
+   correctVeiw()
+   if correctVeiw() And Trim(Screen.text(1, 14, 3)) = seq Then
+      if Screen.check(9, 14, Replace(machine, "-", "/")) Then
+         findSeq = true
+         exit function
+      else
+         Dim machineGroup
+         machineGroup = findMachineGroup(Replace(Screen.text(9, 14, 8), "/", " "))
+         if CompareStrings(machineGroup, currentMachineGroup) Then
+            findSeq = true
+            exit function
+         end if
+      end if
+   end if
+   findSeq = false
+end function
+
+function findSeqValues(Machine)
+   Input.key("[pf1]")
+   Input.key("[enter]")
+   Dim str
+   str = Trim(Screen.text(52, 9, 1)) ' report Y/N
+   str = str + "|" + Trim(Screen.text(11, 5, 20)) 'part number
+   str = str + "|" + Trim(Screen.text(25, 8, 3)) 'run quantity
+   If Trim(Screen.text(52, 9, 1)) = "N" Then
+      Input.key("[pf7]")
+      str = str + "|" + CStr(findCompletedQuantity(Machine)) 'run good
+   Else
+      str = str + "|" + Trim(Screen.text(25, 9, 3)) 'run good
+   End if
+   Input.key("[pf7]")
+   findSeqValues = str
+end function
+
+function findSeqValuesNoReport(Machine)
+   Dim str
+   str = "N" 'report Y/N
+   str = str + "|" + Trim(Screen.text(11, 7, 20)) 'part number
+   str = str + "|" + Trim(Screen.text(78, 6, 3)) 'run quantity
+   str = str + "|" + CStr(findCompletedQuantity(Machine)) ' run good
+   Input.key("[pf7]")
+   findSeqValuesNoReport = str
+end function
+
+function findCompletedQuantity(Machine)
+   if Screen.check(2, 23, "F1=Detail") Then
+      Input.key("[pf11]")
+   end if
+   Input.key("[pf12]")
+   if Screen.check(32, 5, "Work Order Notes") Then
+      Input.key("[pf1]")
+      dim scans
+      scans = findAllScans(Machine)
+      findCompletedQuantity = scans
+   end if
+   Input.key("[pf7]")   
+end function
+
+function findAllScans(Machine)
+   Dim failSafe, offset, totalScans
+   totalScans = 0
+   offset = 6
+   while Trim(Screen.text(3, offset, 1)) <> "" And failSafe < 500
+      Dim text
+      text = Trim(Screen.text(3, offset, 75))
+      if Left(text, 13) = "<Good Pieces>" Then
+         if checkValidScan(text, Machine) Then
+            Dim scanNum
+            scanNum = getScanNumber(text, Machine)
+            if IsNumeric(scanNum) Then
+               totalScans = totalScans + CInt(scanNum)
+            end if
+         end if
+      end if
+      offset = offset + 1
+      if offset = 21 Then
+         Input.key("[roll up]")
+         offset = 6
+      end if
+      failSafe = failSafe + 1
+   wend
+   findAllScans = totalScans
+end function
+
+function checkValidScan(scan, Machine)
+   Dim scanVals
+   scanVals = Split(scan, ">")
+   dim element
+   if Replace(scanVals(3), "<", "") = Machine Then
+      checkValidScan = true
+   end if
+end function
+
+function getScanNumber(scan, Machine)
+   Dim scanVals
+   scanVals = Split(scan, ">")
+   dim element
+   getScanNumber = Replace(scanVals(5), "<", "")
+end function
+
+'change this later
+sub endShift(machine)
+   Dim machineName
+   machineName = Split(machine, vbtab)(1)
+   machineName = Replace(machineName, "-", " ")
+   if logInScanning() And logInToResource(machineName) Then
+      Input.text("10002")
+      Input.key("[enter]")
+      Input.key("[enter]")
+      logOut 3, 3
+   end if
+end sub
+sub startShiftMachine()
+   Dim MachineValues, Machine
+   MachineValues = File.read(machineValuestxtFile)
+   set Machine = getMachineValues(MachineValues)
+   Machine("Machine") = Replace(Machine("Machine"), "-", " ")
+   if logInScanning() And logInToResource(Machine("Machine")) Then
+      logMachineAsRunning()
+      logOut 3, 3
+   end if
+end sub
+function logMachineAsRunning()
+   if Trim(Screen.text(42, 12, 10)) = "0" Then
+      Input.text("10000")
+      Input.key("[enter]")
+      Input.key("[enter]")
+   end if
+end function
+function scrap(ordersArray, piecesArray, reasonsArray)
+   Dim order, pieces
+   order = Split(ordersArray, vbtab)(1)
+   pieces = Split(piecesArray, vbtab)(1)
+   Dim MachineValues, Machine, EmployeeValues, Employee, newMachineSetupValues
+   MachineValues = File.read(machineValuestxtFile)
+   set Machine = getMachineValues(MachineValues)
+   EmployeeValues = File.read(employeeValuestxtFile)
+   set Employee = getEmployeeValues(EmployeeValues)
+   Machine("Machine") = Replace(Machine("Machine"), "-", " ")
+   Dim index
+   index = findIndexes(Split(ordersArray, vbtab), Machine("Jobs"))
+   if Left(reasonsArray, 1) = "R" Then
+      Dim reason
+      reason = Split(reasonsArray, vbtab)(1)
+      if logInScanNoReport() Then
+         logScrapNoReport Machine("Jobs")(index(0)), pieces, Employee("Number"), Machine("Machine"), reason
+         logOut 3, 3
+      end if
+   else
+      if logInScanning() And logInToResource(Machine("Machine")) Then
+         logMachineAsRunning()
+         if logWOEmpScrap(Machine("Jobs")(index(0)), Machine("Sequences")(index(0)), pieces, Employee("Number")) Then
+            if findReasonCode() Then
+   
+            end if
+            logOut 3, 3
+         end if
+      end if
+   end if
+end function
+sub goodPieces(orders, pieces)
+   Dim MachineValues, Machine, EmployeeValues, Employee, newMachineSetupValues
+   MachineValues = File.read(machineValuestxtFile)
+   set Machine = getMachineValues(MachineValues)
+   EmployeeValues = File.read(employeeValuestxtFile)
+   set Employee = getEmployeeValues(EmployeeValues)
+   Machine("Machine") = Replace(Machine("Machine"), "-", " ")
+   Dim indexes
+   indexes = findIndexes(Split(orders, vbtab), Machine("Jobs"))
+   Dim i, j
+   Dim numPieces
+   numPieces = Split(pieces, vbtab)
+   if atLeastOneReportingSeqIsY(Machine("ReportingSequence")) Then
+      if logInScanning() And logInToResource(Machine("Machine")) Then
+         logMachineAsRunning()
+         logInGeneral(Employee("Number"))
+
+         j = 1
+         for each i in indexes 
+            if i <> "" Then
+               if Machine("ReportingSequence")(i) = "Y" Then
+                  if scanGoodPiecesOrder(Machine("Jobs")(i), Machine("Sequences")(i), numPieces(j)) Then
+                     Dim copyArray
+                     copyArray = Machine("GoodPieces")
+                     copyArray(i) = CInt(Machine("GoodPieces")(i)) + numPieces(j)
+                     Machine("GoodPieces") = copyArray
+                  end if
+               end if               
+            end if
+            j = j + 1
+         next
+      end if
+      Save(Machine)
+      logOut 3, 3
+   end if
+   if atLeastOneReportingSeqIsN(Machine("ReportingSequence")) Then
+      if logInScanNoReport() Then
+         j = 1
+         for each i in indexes 
+            if i <> "" Then
+               if Machine("ReportingSequence")(i) = "N" Then
+                  Dim numNeeded
+                  numNeeded = scanGoodPiecesOrderNoReport(Machine("Jobs")(i), Machine("Machine"), Employee("Number"), numPieces(j))
+                  ' Dim copyArrayNum
+                  ' copyArrayNum = Machine("GoodPieces")
+                  ' copyArrayNum(i) = numNeeded
+                  ' Machine("GoodPieces") = copyArrayNum
+               end if
+            end if
+            j = j + 1
+         next
+      end if
+      Save(Machine)
+      logOut 3, 3
+   end if
+end sub
+sub pause()
+   Dim MachineValues, Machine
+   MachineValues = File.read(machineValuestxtFile)
+   set Machine = getMachineValues(MachineValues)
+   Machine("Machine") = Replace(Machine("Machine"), "-", " ")
+   if logInScanning() And logInToResource(Machine("Machine")) Then
+      logMachineAsRunning()
+      Input.text("10100")
+      Input.key("[enter]")
+      logOut 3, 3
+   end if
+end sub
+sub play()
+   Dim MachineValues, Machine
+   MachineValues = File.read(machineValuestxtFile)
+   set Machine = getMachineValues(MachineValues)
+   Machine("Machine") = Replace(Machine("Machine"), "-", " ")
+   if logInScanning() And logInToResource(Machine("Machine")) Then
+      logMachineAsRunning()
+      Input.text("10101")
+      Input.key("[enter]")
+      logOut 3, 3
+   end if
+end sub
+sub run()
+   Dim MachineValues, Machine, EmployeeValues, Employee, seqValues, newMachineSetupValues
+   MachineValues = File.read(machineValuestxtFile)
+   set Machine = getMachineValues(MachineValues)
+   EmployeeValues = File.read(employeeValuestxtFile)
+   set Employee = getEmployeeValues(EmployeeValues)
+   Machine("Machine") = Replace(Machine("Machine"), "-", " ")
+   Dim newJobStatus
+   if atLeastOneReportingSeqIsY(Machine("ReportingSequence")) Then
+      if logInScanning() And logInToResource(Machine("Machine")) Then
+         logMachineAsRunning()
+         newJobStatus = scanAsRun(Machine, Employee("Number"))
+         logOut 3, 3
+      end if
+   end if
+   if atLeastOneReportingSeqIsN(Machine("ReportingSequence")) Then
+      if logInScanNoReport() Then
+         newJobStatus = scanAsRunNoReport(Machine, Employee("Number"))
+         logOut 3, 3
+      end if
+   end if
+end sub
+sub setup()
+   Dim MachineValues, Machine, EmployeeValues, Employee, seqValues, newMachineSetupValues
+   MachineValues = File.read(machineValuestxtFile)
+   set Machine = getMachineValues(MachineValues)
+   EmployeeValues = File.read(employeeValuestxtFile)
+   set Employee = getEmployeeValues(EmployeeValues)
+   Machine("Machine") = Replace(Machine("Machine"), "-", " ")
+   Dim newJobStatus
+   if atLeastOneReportingSeqIsY(Machine("ReportingSequence")) Then
+      if logInScanning() And logInToResource(Machine("Machine")) Then
+         logMachineAsRunning()
+         newJobStatus = scanAsSetup(Machine, Employee("Number"))
+         logOut 3, 3
+      end if
+   end if
+   if atLeastOneReportingSeqIsN(Machine("ReportingSequence")) Then
+      if logInScanNoReport() Then
+         newJobStatus = scanAsSetupNoReport(Machine, Employee("Number"))
+         logOut 3, 3
+      end if
+   end if
+end sub
+'functions for scrap
+function logScrapNoReport(job, pieces, employee, machine, reason)
+
+   Input.text(job)
+   Input.chop job, 10
+   Input.key("[enter]")
+   Input.key("[pf1]")
+   if Trim(Screen.text(42, 17, 10)) = job Then
+      Input.key("[enter]")
+      Input.key("[pf1]")
+      setToFirstOpenLine()
+      logOpDateNumberPiecesReason "Scrap", machine, employee, pieces, reason
+      Input.key("[pf7]")
+      logScrapNoReport = true
+   end if
+   Input.key("[pf7]")
+end function
+function logWOEmpScrap(order, seq, pieces, employee)
+   enterRunMode order, seq
+   Input.text("41000")
+   Input.key("[enter]")
+   Input.text(employee)
+   Input.key("[enter]")
+   if Screen.check(28, 19, "Please Enter Information") Then
+      Input.text(pieces)
+      Input.key("[fldext]")
+      logWOEmpScrap = true
+   end if
+end function
+function findReasonCode()
+   Dim codesArray, userInput
+   codesArray = getAllReasonCodes()
+   userInput = getUserInputReasonForScrap(codesArray)
+   if userInput <> false Then
+      if inputScrapCode(userInput) Then
+         findReasonCode = true
+      end if
+   else
+      Input.key("[pf7]")
+      Input.key("[pf7]")
+   end if
+end function
+function inputScrapCode(code)
+   Input.key("[pf7]")
+   Input.setCursor 35, 16
+   Input.text(code)
+   Input.key("[enter]")
+   if Trim(Screen.text(11, 15, 40)) = "" Then
+      inputScrapCode = true
+   end if
+end function
+function getUserInputReasonForScrap(reasons)
+   dim codes, descriptions
+   if IsArray(reasons) Then
+      codes = Split(reasons(0), ",")
+      descriptions = Split(reasons(1), ",")
+   end if
+   dim i, msg, result
+   msg = "Please enter number or error code e.g. 0 or BB for BAD BLANK" + vbCrLf
+   For i = 0 to UBound(codes) - 1
+      msg = msg + CStr(i) + " - " + codes(i) + " - " + descriptions(i) + vbCrLf
+   Next
+   File.write File.buildPath("local files/machine/machine-go.txt"), "Message|" + msg
+   waitIntilChanged()
+   result = File.read(File.buildPath("local files/machine/machine-go.txt"))
+   result = Split(result, "|")(0)
+   File.write File.buildPath("local files/machine/machine-go.txt"), "Working"
+   ' result = Trim(InputBox(msg, "Reason for Scrap"))
+   if result <> "" Then
+      dim selectedCode, code
+      if IsNumeric(result) Then
+         if CInt(result) < UBound(codes) Then
+            selectedCode = codes(CInt(result))
+         else
+            File.write File.buildPath("local files/machine/machine-go.txt"), "Message|Please enter again"
+            CustomSleep(1000)
+            getUserInputReasonForScrap = getUserInputReasonForScrap(reasons)
+            exit function
+         end if
+      else
+         selectedCode = result
+      end if
+      for i = 0 to UBound(descriptions)
+         if selectedCode = codes(i) Then
+            getUserInputReasonForScrap = codes(i)
+            exit function
+         end if
+      next
+      File.write File.buildPath("local files/machine/machine-go.txt"), "Message|Please enter again"
+      CustomSleep(1000)
+      getUserInputReasonForScrap = getUserInputReasonForScrap(reasons)
+      exit function
+   else
+      getUserInputReasonForScrap = false
+   end if
+end function
+function getAllReasonCodes()
+   Input.key("[pf4]")
+   goToTopOfList()
+
+   dim codeStr, descriptionStr, lengthArray, colOffset, lastCode, returnArr(1)
+   while Screen.check(48, 17, " ") = false And lengthArray < 90
+      colOffset = 7
+      while Screen.check(42, colOffset, " ") = false and colOffset < 20
+         if Screen.text(42, colOffset, 2) + "," <> lastCode Then
+            lastCode = Screen.text(42, colOffset, 2) + ","
+            codeStr = codeStr + lastCode
+            descriptionStr = descriptionStr + Trim(Screen.text(48, colOffset, 30)) + ","
+         end if
+         colOffset = colOffset + 1
+      wend
+      lengthArray = lengthArray + 1
+
+      Input.key("[roll up]")
+   wend
+   colOffset = 7
+   while Screen.check(42, colOffset, " ") = false and colOffset < 20
+      if Screen.text(42, colOffset, 2) + "," <> lastCode Then
+         lastCode = Screen.text(42, colOffset, 2) + ","
+         codeStr = codeStr + lastCode
+         descriptionStr = descriptionStr + Trim(Screen.text(48, colOffset, 30)) + ","
+      end if
+      colOffset = colOffset + 1
+   wend
+   returnArr(0) = codeStr
+   returnArr(1) = descriptionStr
+   getAllReasonCodes = returnArr
+end function
+function goToTopOfList()
+   dim firstCode, newCode, failSafe
+   failSafe = 0
+   firstCode = Screen.text(42, 7, 2)
+   Input.key("[roll down]")
+   newCode = Screen.text(42, 7, 2)
+   while firstCode <> newCode And failSafe < 50
+      failSafe = failSafe + 1
+      if firstCode > newCode Then
+         firstCode = newCode
+      end if
+      Input.key("[roll down]")
+      newCode = Screen.text(42, 7, 2)
+   wend
+end function
+'functions for good pieces
+function scanGoodPiecesOrder(order, seq, pieces)
+   if enterRunMode(order, seq) Then
+      if scanGoodPieces(pieces) Then
+         scanGoodPiecesOrder = true
+      end if
+   end if
+end function
+function scanGoodPiecesOrderNoReport(job, machine, employee, pieces)
+   Input.text(job)
+   Input.chop job, 10
+   Input.key("[enter]")
+   Input.key("[pf1]")
+   if Trim(Screen.text(42, 17, 10)) = job Then
+      Input.key("[enter]")
+      Input.key("[pf1]")
+      setToFirstOpenLine()
+      logOpDateNumberPieces "Good Pieces", machine, employee, pieces
+      Input.key("[pf7]")
+   end if
+   Input.key("[pf7]")
+end function
+function findNumberOfGoodPieces()
+   Input.key("[pf1]")
+   Dim failSafe
+
+   Dim offset_y, total
+   total = 0
+   offset_y = 6
+   while Trim(Screen.text(3, offset_y, 5)) <> "" And failSafe < 1000
+      Dim inputString
+      inputString = Trim(Screen.text(3, offset_y, 74))
+      if Left(inputString, Len("<Good Pieces>")) = "<Good Pieces>" Then
+         Dim arr
+         arr = Split(inputString, "<")
+         total = total + CInt(Split(arr(UBound(arr)), ">")(0))
+      end if
+      failSafe = failSafe + 1
+      offset_y = offset_y + 1
+      if offset_y = 21 Then
+         Input.key("[roll up]")
+         offset_y = 6
+      end if
+   wend
+   findNumberOfGoodPieces = total
+end function
+function logInGeneral(employee)
+   Input.text("10100")
+   Input.key("[enter]")
+   Input.text("20001")
+   Input.key("[enter]")
+   Input.text(employee)
+   Input.key("[enter]")
+   Input.key("[enter]")
+   if Trim(Screen.text(19, 13, 40)) = "" Then
+      logInGeneral = true
+   end if
+end function
+function enterRunMode(order, seq)
+   Input.text("10151")
+   Input.key("[enter]")
+   Input.text(order)
+   Input.chop order, 10
+   Input.setCursor 36, 10
+   Input.text(seq)
+   Input.key("[fldext]")
+   Input.key("[enter]")
+   if Screen.check(36, 5, "Error! The setup time is earlier") Then
+      Input.key("[pf1]")
+      enterRunMode = true
+   elseif Not Screen.check(36, 7, "Setup Mode") Then
+      enterRunMode = true
+   end if
+end function
+function scanGoodPieces(pieces)
+   Input.text("40005")
+   Input.key("[enter]")
+   Input.text(pieces)
+   Input.key("[enter]")
+   if Not Screen.check(16, 15, "Quantity Produced") Then
+      scanGoodPieces = true
+   end if
+end function
+
+'functions for run
+function findIndexes(runArray, MachineJobs)
+   Dim i, indexString
+   for i = 1 to UBound(runArray) step 1
+      indexString = indexString + CStr(findIndex(MachineJobs, runArray(i))) + vbtab
+   next
+   findIndexes = Split(indexString, vbtab)
+end function
+function findIndex(MachineJobs, job)
+   Dim i
+   for i = 0 to UBound(MachineJobs) step 1
+      if MachineJobs(i) = job Then
+         findIndex = i
+         exit function
+      end if
+   next
+end function
+function getValuesToRunOrders(indexes, MachineValues)
+   Dim machine, group, sequences, jobs, partNumbers, goodPieces, piecesNeeded, reportingSequence, partNumberString, goodPiecesString, piecesNeededString, reportingSequenceString
+   machine = MachineValues("Machine")
+   group = MachineValues("MachineGroup")
+   sequences = MachineValues("Sequences")
+   jobs = MachineValues("Jobs")
+   partNumbers = MachineValues("PartNumbers")
+   goodPieces = MachineValues("GoodPieces")
+   piecesNeeded = MachineValues("PiecesNeeded")
+   reportingSequence = MachineValues("ReportingSequence")
+   Dim i, seqValues
+   for i = 0 to UBound(indexes) step 1
+      Dim index
+      if indexes(i) <> "" Then
+         index = CInt(indexes(i))
+         seqValues = checkSequence(machine, group, sequences(index), jobs(index))
+         if isArray(seqValues) Then
+            if UBound(MachineValues("PartNumbers")) >= index Then
+               partNumbers(index) = seqValues(0)
+               goodPieces(index) = seqValues(1)
+               piecesNeeded(index) = seqValues(2)
+               reportingSequence(index) = seqValues(3)
+            else
+               partNumberString = partNumberString + vbtab + seqValues(0)
+               goodPiecesString = goodPiecesString + vbtab + seqValues(1)
+               piecesNeededString = piecesNeededString + vbtab + seqValues(2)
+               reportingSequenceString = reportingSequenceString + vbtab + seqValues(3)
+            end if
+         else
+            exit function
+         end if
+      end if
+   next
+   partNumberString = arrayToTabString(partNumbers) + partNumberString
+   goodPiecesString = arrayToTabString(goodPieces) + goodPiecesString
+   piecesNeededString = arrayToTabString(piecesNeeded) + piecesNeededString
+   reportingSequenceString = arrayToTabString(reportingSequence) + reportingSequenceString
+   Dim returnArr(3)
+   returnArr(0) = partNumberString
+   returnArr(1) = goodPiecesString
+   returnArr(2) = piecesNeededString
+   returnArr(3) = reportingSequenceString
+   getValuesToRunOrders = returnArr
+end function
+function scanAsRun(MachineValues, Employee)
+   Dim jobsArray, seqArray, statusArray, statusArrayLength, reportArray, statusString
+   jobsArray = MachineValues("Jobs")
+   seqArray = MachineValues("Sequences")
+   reportArray = MachineValues("ReportingSequence")
+   Dim i
+   for i = 0 to UBound(jobsArray) step 1
+      if reportArray(i) = "Y" Then
+         if scanOrderAsRun(jobsArray(i), seqArray(i), Employee) Then
+
+         else
+            exit function
+         end if
+      end if
+   next
+   statusString = ""
+   scanAsRun = Split(statusString, vbtab)
+end function
+function scanOrderAsRun(job, seq, employee)
+   Input.setCursor 11, 21
+   Input.text("20006")
+   Input.key("[enter]")
+   if Screen.check(29, 11, "Tag #") Then
+      Input.text(employee)
+      Input.key("[enter]")
+      if Screen.check(33, 6, "Login Run Mode") Then
+         Input.setCursor 37, 12
+         Input.text(job)
+         Input.chop job, 10
+         Input.setCursor 37, 13
+         Input.text(seq)
+         Input.chop seq, 3
+         Input.key("[enter]")
+         if Trim(Screen.text(29, 13, 10)) = "" Then
+            ' Input.key("[pf1]")
+            scanOrderAsRun = true
+         elseif Not Screen.check(36, 7, "Setup Mode") Then
+            scanOrderAsRun = true
+         end if
+      end if
+   end if
+   ' if Screen.check(36, 7, "Setup Mode") Then
+   '    Input.setCursor 36, 9
+   '    Input.text(job)
+   '    Input.chop job, 10
+   '    Input.setCursor 36, 10
+   '    Input.text(seq)
+   '    Input.chop seq, 3
+   '    Input.key("[enter]")
+   '    if Screen.check(36, 5, "Error! The setup time is earlier") Then
+   '       Input.key("[pf1]")
+   '       scanOrderAsSetup = true
+   '    elseif Not Screen.check(36, 7, "Setup Mode") Then
+   '       scanOrderAsSetup = true
+   '    end if
+   ' else
+   '    Input.key("[pf7]")
+   ' end if
+end function
+function scanAsRunNoReport(MachineValues, Employee)
+   Dim jobsArray, seqArray, statusArray, statusArrayLength, reportArray, statusString
+   jobsArray = MachineValues("Jobs")
+   seqArray = MachineValues("Sequences")
+   reportArray = MachineValues("ReportingSequence")
+   Dim i
+   for i = 0 to UBound(jobsArray) step 1
+      if reportArray(i) = "N" Then
+         if scanOrderAsRunNoReport(jobsArray(i), seqArray(i), Employee, MachineValues("Machine")) Then
+
+         else
+            exit function
+         end if
+      end if
+   next
+   scanAsRunNoReport = true
+end function
+function scanOrderAsRunNoReport(job, seq, employee, machine)
+   Input.text(job)
+   Input.chop job, 10
+   Input.key("[enter]")
+   Input.key("[pf1]")
+   if Trim(Screen.text(42, 17, 10)) = job Then
+      Input.key("[enter]")
+      Input.key("[pf1]")
+      setToFirstOpenLine()
+      logOpDateNumber "Run", machine, employee
+      Input.key("[pf7]")
+      scanOrderAsRunNoReport = true
+   end if
+   Input.key("[pf7]")
+end function
+'functions for setup
+function scanAsSetup(MachineValues, Employee)
+   Dim jobsArray, seqArray, statusArray, reportArray, statusString
+   jobsArray = MachineValues("Jobs")
+   seqArray = MachineValues("Sequences")
+   reportArray = MachineValues("ReportingSequence")
+   Dim i
+   for i = 0 to UBound(jobsArray) step 1
+      if reportArray(i) = "Y" Then
+         ' if Not checkAllreadySetUp(i, statusArray) Then
+         if scanOrderAsSetup(jobsArray(i), seqArray(i), Employee) Then
+
+         else
+            exit function
+         end if
+         ' end if
+      end if
+   next
+   scanAsSetup = true
+end function
+function scanAsSetupNoReport(MachineValues, Employee)
+   Dim jobsArray, seqArray, statusArray, reportArray, statusString
+   jobsArray = MachineValues("Jobs")
+   seqArray = MachineValues("Sequences")
+   reportArray = MachineValues("ReportingSequence")
+   Dim i
+   for i = 0 to UBound(jobsArray) step 1
+      if reportArray(i) = "N" Then
+         if scanOrderAsSetupNoReport(jobsArray(i), seqArray(i), Employee, MachineValues("Machine")) Then
+
+         else
+            exit function
+         end if
+      end if
+   next
+   scanAsSetupNoReport = true
+end function
+function scanOrderAsSetupNoReport(job, seq, employee, machine)
+   Input.text(job)
+   Input.chop job, 10
+   Input.key("[enter]")
+   Input.key("[pf1]")
+   if Trim(Screen.text(42, 17, 10)) = job Then
+      Input.key("[enter]")
+      Input.key("[pf1]")
+      setToFirstOpenLine()
+      logOpDateNumber "Setup", machine, employee
+      Input.key("[pf7]")
+      scanOrderAsSetupNoReport = true
+   end if
+   Input.key("[pf7]")
+end function
+function setToFirstOpenLine()
+   Input.key("[pf1]")
+   Dim failSafe
+   while Trim(Screen.text(3, 20, 5)) <> "" And failSafe < 100
+      Input.key("[roll up]")
+      failSafe = failSafe + 1
+   wend
+   Dim offset_y
+   offset_y = 6
+   while Trim(Screen.text(3, offset_y, 5)) <> "" And failSafe < 100
+      failSafe = failSafe + 1
+      offset_y = offset_y + 1
+   wend
+   Input.setCursor 3, offset_y
+end function
+function scanOrderAsSetup(job, seq, employee)
+   Input.setCursor 11, 21
+   Input.text("20005")
+   Input.key("[enter]")
+   if Screen.check(29, 11, "Tag #") Then
+      Input.text(employee)
+      Input.key("[enter]")
+      if Screen.check(32, 6, "Labour Setup Mode") Then
+         Input.setCursor 37, 12
+         Input.text(job)
+         Input.chop job, 10
+         Input.setCursor 37, 13
+         Input.text(seq)
+         Input.chop seq, 3
+         Input.key("[enter]")
+         if Trim(Screen.text(29, 13, 10)) = "" Then
+            ' Input.key("[pf1]")
+            scanOrderAsSetup = true
+         elseif Not Screen.check(36, 7, "Setup Mode") Then
+            scanOrderAsSetup = true
+         end if
+      end if
+   end if
+   ' if Screen.check(36, 7, "Setup Mode") Then
+   '    Input.setCursor 36, 9
+   '    Input.text(job)
+   '    Input.chop job, 10
+   '    Input.setCursor 36, 10
+   '    Input.text(seq)
+   '    Input.chop seq, 3
+   '    Input.key("[enter]")
+   '    if Screen.check(36, 5, "Error! The setup time is earlier") Then
+   '       Input.key("[pf1]")
+   '       scanOrderAsSetup = true
+   '    elseif Not Screen.check(36, 7, "Setup Mode") Then
+   '       scanOrderAsSetup = true
+   '    end if
+   ' else
+   '    Input.key("[pf7]")
+   ' end if
+end function
+function getValuesToSetUpOrders(MachineValues)
+   Dim machine, group, sequences, jobs, partNumbers, goodPieces, piecesNeeded, reportingSequence, partNumberString, goodPiecesString, piecesNeededString, reportingSequenceString
+   machine = MachineValues("Machine")
+   group = MachineValues("MachineGroup")
+   sequences = MachineValues("Sequences")
+   jobs = MachineValues("Jobs")
+   partNumbers = MachineValues("PartNumbers")
+   goodPieces = MachineValues("GoodPieces")
+   piecesNeeded = MachineValues("PiecesNeeded")
+   reportingSequence = MachineValues("ReportingSequence")
+   Dim i, seqValues
+   for i = 0 to UBound(jobs) step 1
+      if hasValidParams(jobs, sequences, i) And checkAllreadySetUp(i, partNumbers) <> true Then
+         seqValues = checkSequence(machine, group, sequences(i), jobs(i))
+         if isArray(seqValues) Then
+            if UBound(MachineValues("PartNumbers")) >= i Then
+               partNumbers(i) = seqValues(0)
+               goodPieces(i) = seqValues(1)
+               piecesNeeded(i) = seqValues(2)
+               reportingSequence(i) = seqValues(3)
+            else
+               partNumberString = partNumberString + vbtab + seqValues(0)
+               goodPiecesString = goodPiecesString + vbtab + seqValues(1)
+               piecesNeededString = piecesNeededString + vbtab + seqValues(2)
+               reportingSequenceString = reportingSequenceString + vbtab + seqValues(3)
+            end if
+         else
+            exit function
+         end if
+      end if
+   next
+   partNumberString = arrayToTabString(partNumbers) + partNumberString
+   goodPiecesString = arrayToTabString(goodPieces) + goodPiecesString
+   piecesNeededString = arrayToTabString(piecesNeeded) + piecesNeededString
+   reportingSequenceString = arrayToTabString(reportingSequence) + reportingSequenceString
+   Dim returnArr(3)
+   returnArr(0) = partNumberString
+   returnArr(1) = goodPiecesString
+   returnArr(2) = piecesNeededString
+   returnArr(3) = reportingSequenceString
+   getValuesToSetUpOrders = returnArr
+end function
+function arrayToTabString(arr)
+   Dim i, returnString
+   returnString = arr(0)
+   for i = 1 to UBound(arr) step 1
+      returnString = returnString + vbTab + arr(i)
+   next
+   arrayToTabString = returnString
+end function
+function hasValidParams(jobs, sequences, index)
+   if UBound(jobs) >= index And UBound(sequences) >= index Then
+      hasValidParams = true
+   end if
+end function
+function elementIsNonNull(index, array)
+   if isArray(array) Then
+      if index <= UBound(array) Then
+         if array(i) <> "null" Then
+            elementIsNonNull = true
+         end if
+      end if
+   end if
+end function
+function checkAllreadySetUp(index, array)
+   if index <= UBound(array) Then
+      if array(index) <> "null" Then
+         checkAllreadySetUp = true
+         exit function
+      end if
+   end if
+   checkAllreadySetUp = false
+end function
+'functions for checking sequence
+function checkSequence(machine, group, seq, workOrder)
+      Dim sequence
+      if IsNumeric(seq) Then
+         sequence = CStr(CInt(seq))
+      else
+         sequence = seq
+      end if
+   ' if logInSequence() Then
+      Input.text(workOrder)
+      Input.chop workOrder, 10
+      Input.key("[enter]")
+      Input.key("[pf1]")
+      if Trim(Screen.text(42, 17, 10)) = workOrder Then
+         Input.key("[enter]")
+         if correctVeiw() Then
+            Dim seqLine
+            seqLine = getCorrectLine(sequence)
+            if seqLine <> false Then
+               if Screen.check(9, seqLine, Replace(machine, " ", "/")) Then
+                  checkSequence = findPartAndNumPieces(seqLine)
+                  Input.key("[pf7]")
+               else
+                  Dim MachineGroup
+                  MachineGroup = findMachineGroup(Replace(Screen.text(9, seqLine, 8), "/", " "))
+                  if MachineGroup = group And MachineGroup <> false And MachineGroup <> "null" Then
+                     ' MsgBox("Machine is listed as " + Replace(Screen.text(9, seqLine, 8), "/", " ") + " but with same scanning ability or something.")
+                     checkSequence = findPartAndNumPieces(seqLine)
+                  else
+                     File.write File.buildPath("local files/machine/machine-go.txt"), "Error|Sequence " + sequence + " On work order# " + workOrder + "  found, but for machine " + Replace(Screen.text(9, seqLine, 8), "/", " ")
+                  end if
+                  Input.key("[pf7]")
+               end if
+            else
+               checkSequence = findPartAndNumPiecesNoReport()
+               Input.key("[pf7]")
+            end if
+         else
+            File.write File.buildPath("local files/machine/machine-go.txt"), "Error|Programming error, the key to shift the view was pressed, but it did not return the correct information. Contact the person resonable for maintaining this program."
+         end if
+      else
+         File.write File.buildPath("local files/machine/machine-go.txt"), "Error|Work Order " + workOrder + " does not exist"
+         Input.key("[pf7]")
+      end if
+   ' end if
+end function
+function findPartAndNumPiecesNoReport()
+   Dim returnArrGroup(3)
+   returnArrGroup(0) = Replace(Trim(Screen.text(11, 7, 20)), " ", "-")
+   returnArrGroup(1) = "0"
+   returnArrGroup(2) = Trim(Screen.text(78, 6, 3))
+   returnArrGroup(3) = "N"
+   findPartAndNumPiecesNoReport = returnArrGroup
+end function
+
+function findPartAndNumPieces(seqLine)
+   Dim returnArrGroup(3), numberOfGoodPieces
+   returnArrGroup(0) = Replace(Trim(Screen.text(11, 7, 20)), " ", "-")
+   numberOfGoodPieces = Trim(Screen.text(48, seqLine, 7))
+   if numberOfGoodPieces = "" Then
+      returnArrGroup(1) = "0"
+   else
+      returnArrGroup(1) = Trim(Screen.text(48, seqLine, 7))
+   end if
+   returnArrGroup(2) = Trim(Screen.text(27, seqLine, 7))
+   returnArrGroup(3) = findReportingSeq(seqLine)
+   findPartAndNumPieces = returnArrGroup
+end function
+function findReportingSeq(seqLine)
+   Input.setCursor 15, seqLine
+   Input.key("[pf1]")
+   findReportingSeq = Trim(Screen.text(46, 9, 7))
+   Input.key("[pf7]")
+end function
+Function findMachineGroup(machine)
+    Dim fso, file, data, splitMachine, department, resource, lines, i, line
+    
+    Set fso = CreateObject("Scripting.FileSystemObject")
+    Set file = fso.OpenTextFile("\\192.168.0.13\Engdrawing\Inspection Logs\Scanning Files\machines\MachineGroups.txt")
+    data = file.ReadAll
+    file.Close
+    
+    splitMachine = Split(machine, " ")
+    
+    If UBound(splitMachine) >= 1 Then
+        department = "DFT" & Trim(splitMachine(0))
+        resource = Trim(splitMachine(1))
+        lines = Split(data, vbCrLf)
+        For i = 0 To UBound(lines)
+            line = Split(lines(i), vbTab)
+            If UBound(line) > -1 Then
+               If line(0) = department And line(1) = resource Then
+                   If Len(line(2)) < 2 Then
+                       findMachineGroup = "null"
+                   Else
+                       findMachineGroup = line(2)
+                   End If
+                   
+                   Exit Function
+               End If
+            end if
+        Next
+    End If
+    
+    findMachineGroup = False
+End Function
+function correctVeiw()
+   Dim i
+   for i = 0 to 3 step 1
+      if Screen.check(9, 12, "Dp/Resc") Then
+         correctVeiw = true
+         exit function
+      else
+         Input.key("[pf12]")
+      end if
+   next
+end function
+function getCorrectLine(seq)
+   Dim intSeq, i, lastChecked
+   intSeq = CInt(seq)
+   for i = 0 to 100 step 1
+      Dim bottomSeq
+      bottomSeq = Trim(Screen.text(1, 19, 3))
+      If IsNumeric(bottomSeq) And bottomSeq <> "" And lastChecked <> bottomSeq Then
+         Dim convertedInput
+         convertedInput = CInt(bottomSeq)
+         If convertedInput < intSeq Then
+            Input.key("[roll up]")
+         Else
+            exit for
+         End If
+         lastChecked = bottomSeq
+      Else
+         exit for
+      End If
+   next
+   for i = 0 to 5 step 1
+      if seq = Trim(Screen.text(1, 14 + i, 3)) Then
+         getCorrectLine = 14 + i
+         exit function
+      end if
+   next
+   getCorrectLine = false
+end function
+
+'functions for logging notes
+function logValuesInNotes(valuesStr)
+   Dim valuesArr, i, enterString
+   valuesArr = Split(valuesStr, vbtab)
+   enterString = "<" + valuesArr(0) + ">"
+   for i = 1 to UBound(valuesArr) step 1
+      enterString = enterString + "<" + valuesArr(i) + ">"
+   next
+   Input.text(enterString)
+   Input.key("[enter]")
+end function
+function logOpDateNumber(operation, machine, number)
+   Dim str
+   Dim currentDateTime
+   currentDateTime = Now()
+   
+   Dim currentDate, currentTime
+   currentDate = CStr(DateValue(currentDateTime))
+   currentTime = CStr(TimeValue(currentDateTime))
+
+   str = operation + vbtab
+   str = str + currentDate + vbtab
+   str = str + currentTime + vbtab
+   str = str + machine + vbtab
+   str = str + number
+   logValuesInNotes(str)
+end function
+function logOpDateNumberPieces(operation, machine, number, pieces)
+   Dim str
+   Dim currentDateTime
+   currentDateTime = Now()
+   
+   Dim currentDate, currentTime
+   currentDate = CStr(DateValue(currentDateTime))
+   currentTime = CStr(TimeValue(currentDateTime))
+
+   str = operation + vbtab
+   str = str + currentDate + vbtab
+   str = str + currentTime + vbtab
+   str = str + machine + vbtab
+   str = str + number + vbtab
+   str = str + pieces
+   logValuesInNotes(str)
+end function
+function logOpDateNumberPiecesReason(operation, machine, number, pieces, reason)
+   Dim str
+   Dim currentDateTime
+   currentDateTime = Now()
+   
+   Dim currentDate, currentTime
+   currentDate = CStr(DateValue(currentDateTime))
+   currentTime = CStr(TimeValue(currentDateTime))
+
+   str = operation + vbtab
+   str = str + currentDate + vbtab
+   str = str + currentTime + vbtab
+   str = str + machine + vbtab
+   str = str + number + vbtab
+   str = str + pieces + vbtab
+   str = str + reason
+   logValuesInNotes(str)
+end function
+function atLeastOneReportingSeqIsY(reporting)
+   Dim element
+   for each element in reporting
+      if element = "Y" Then
+         atLeastOneReportingSeqIsY = true
+      end if
+   next
+end function
+function atLeastOneReportingSeqIsN(reporting)
+   Dim element
+   for each element in reporting
+      if element = "N" Then
+         atLeastOneReportingSeqIsN = true
+      end if
+   next
+end function
+'functions for finding Machine Values
+function getMachineValues(inputString)
+   Dim obj
+   Set obj = CreateObject("Scripting.Dictionary")
+   
+   Dim linesArray
+   linesArray = Split(inputString, vbLf)
+   
+   Dim i
+   For i = LBound(linesArray) To UBound(linesArray)
+      Dim lineArray
+      lineArray = Split(linesArray(i), vbTab)
+      if UBound(lineArray) > 0 Then
+         Dim j, partValues
+         partValues = lineArray(1)
+         For j = 2 To UBound(lineArray)
+            partValues = partValues + vbtab + lineArray(j)
+         Next
+         if lineArray(0) = "Jobs" or lineArray(0) = "Sequences" or lineArray(0) = "PartNumbers" or lineArray(0) = "GoodPieces" or lineArray(0) = "PiecesNeeded" or lineArray(0) = "ReportingSequence" Then
+            obj(lineArray(0)) = Split(partValues, vbtab)
+         else
+            if Trim(partValues) <> "" Then
+               obj(lineArray(0)) = Trim(partValues)
+            else
+               obj(lineArray(0)) = "null"
+            end if
+         end if
+      end if
+   Next
+   
+   Set getMachineValues = obj
+end function
+Function Save(machine)
+  Dim writeString, prop
+  writeString = ""
+  
+  For Each prop In machine
+    If Not IsEmpty(machine(prop)) Then
+      If IsArray(machine(prop)) Then
+        writeString = writeString & prop & vbTab & machine(prop)(0)
+        Dim i
+        For i = 1 To UBound(machine(prop))
+         writeString = writeString & vbTab & machine(prop)(i)
+        Next
+        writeString = writeString & vbCrLf
+      Else
+         if machine(prop) = "" Then
+            machine(prop) = "null"
+         else
+            if prop = "Machine" Then
+               writeString = writeString & prop & vbTab & Replace(machine(prop), " ", "-") & vbCrLf
+            else
+               writeString = writeString & prop & vbTab & machine(prop) & vbCrLf
+            end if
+         end if
+      End If
+    End If
+  Next
+  
+  File.write ".\local files\machine\machine.txt", writeString
+End Function
+'functions for employees
+function getEmployeeValues(inputString)
+   Dim obj
+   Set obj = CreateObject("Scripting.Dictionary")
+   
+   Dim linesArray
+   linesArray = Split(inputString, vbLf)
+   
+   Dim i
+   For i = LBound(linesArray) To UBound(linesArray)
+      Dim lineArray
+      lineArray = Split(linesArray(i), vbTab)
+      if UBound(lineArray) > 0 Then
+         Dim j, partValues
+         partValues = lineArray(1)
+         For j = 2 To UBound(lineArray)
+            partValues = partValues + vbtab + lineArray(j)
+         Next
+         if Trim(partValues) <> "" Then
+            obj(lineArray(0)) = partValues
+         else
+            obj(lineArray(0)) = "null"
+         end if
+      end if
+   Next
+   
+   Set getEmployeeValues = obj
+end function
+
+'log ins
+
+   function logInScanNoReport()
+      Dim logInScanNoReportArr(3)
+      Set logInScanNoReportArr(0) = Commands.create("CMS Main Menu", 34, 3, 3)
+      Set logInScanNoReportArr(1) = Commands.create("Production Management Main Menu", 25, 3, 8)
+      Set logInScanNoReportArr(2) = Commands.create("Maintain Current Production - Main Menu", 21, 3, 2)
+      Set logInScanNoReportArr(3) = Commands.create("Production Scheduling Menu", 28, 3, 1)
+      if Commands.execute(logInScanNoReportArr, Screen) <> false Then
+         msgbox("Please start at the correct screen, the CMS Main Menu")
+         logInScanNoReport = false
+      else
+         logInScanNoReport = true
+      end if
+   end function
+
+
+   function logInSequence()
+      Dim logInSequenceArr(3)
+      Set logInSequenceArr(0) = Commands.create("CMS Main Menu", 34, 3, 3)
+      Set logInSequenceArr(1) = Commands.create("Production Management Main Menu", 25, 3, 8)
+      Set logInSequenceArr(2) = Commands.create("Maintain Current Production - Main Menu", 21, 3, 4)
+      Set logInSequenceArr(3) = Commands.create("Production Inquiry Menu", 29, 3, 1)
+      if Commands.execute(logInSequenceArr, Screen) <> false Then
+         msgbox("Please start at the correct screen, the CMS Main Menu")
+         logInSequence = false
+      else
+         logInSequence = true
+      end if
+   end function
+
+   function logInToResource(Machine)
+   if Screen.check(22, 1, "Production - Resource Activity Management") Then
+      Input.key("[pf5]")
+      if Screen.check(34, 13, "Enter") Then
+            Input.text(Replace(Machine, " ", ""))
+            Input.key("[enter]")
+            Dim check
+            check = Split(Machine, " ")
+            if Screen.check(15, 3, Trim(check(0))) And Screen.check(15, 4, check(1)) Then
+               logInToResource = true
+            end if
+         end if
+      end if
+   end function
+
+   function logInScanning()
+      Dim logInScanningArr(5)
+      Set logInScanningArr(0) = Commands.create("CMS Main Menu", 34, 3, 3)
+      Set logInScanningArr(1) = Commands.create("Production Management Main Menu", 25, 3, 8)
+      Set logInScanningArr(2) = Commands.create("Maintain Current Production - Main Menu", 21, 3, 10)
+      Set logInScanningArr(3) = Commands.create("Production Shop Floor Reporting Menu", 23, 3, 4)
+      Set logInScanningArr(4) = Commands.create("Production - Production Reporting Devices", 22, 1, "[pf1]")
+      Set logInScanningArr(5) = Commands.create("Device", 19, 4, "[pf1]")
+      if Commands.execute(logInScanningArr, Screen) <> false Then
+         msgbox("Please start at the correct screen, the CMS Main Menu")
+         logInScanning = false
+      else
+         logInScanning = true
+      end if
+   end function
+
+   function logOut(numF7, numF3)
+      Dim i
+      For i = 1 To numF7
+         Input.key("[pf7]")
+      Next
+      For i = 1 To numF3
+         Input.key("[pf3]")
+      Next
+      if Screen.check(34, 3, "CMS Main Menu") = true Then
+         logOut = true
+      else
+         logOut = false
+      end if
+   end function
+
+' default classes
+
+   Class ScreenClass
+
+      public function check(startRow, startCol, string)
+         if text(startRow, startCol, Len(string)) = string Then
+               check = true
+         else
+               check = false
+         end if
+      end function
+
+      public function text(startRow, startCol, length)
+         autECLSession.autECLOIA.WaitForInputReady
+         text = Mid(autECLSession.autECLPS.GetText(), (startCol - 1) * 80 + startRow, length)
+      end function
+
+   end Class
+
+   Class FileClass
+
+      public function buildPath(name)
+         dim textFilePath, fso, currentDirectory
+         Set fso = CreateObject("Scripting.FileSystemObject")
+         currentDirectory = fso.GetAbsolutePathName(".")
+         textFilePath = fso.BuildPath(currentDirectory, name)
+         buildPath = textFilePath
+      end function
+
+      public function write(filePath, string)
+         Dim objFSO, objFile
+         Set objFSO = CreateObject("Scripting.FileSystemObject")
+
+         Set objFile = objFSO.CreateTextFile(filePath, True)
+
+         objFile.Write(string)
+
+         objFile.Close
+
+         Set objFile = Nothing
+         Set objFSO = Nothing
+      end function
+
+      public function read(filePath)
+         Dim objFSO, objTextFile, strContents
+
+         On Error Resume Next
+
+         Set objFSO = CreateObject("Scripting.FileSystemObject")
+         Set objTextFile = objFSO.OpenTextFile(filePath, 1)
+
+         strContents = objTextFile.ReadAll
+
+         objTextFile.Close
+         Set objTextFile = Nothing
+         Set objFSO = Nothing
+
+         ' Check if an error occurred
+         If Err.Number <> 0 Then
+            read = ""
+         Else
+            read = strContents
+         End If
+
+         On Error GoTo 0
+      end function
+
+   End Class
+
+   Class InputClass
+
+      public function chop(str, maxLength)
+         if Len(str) < maxLength Then
+            key("[fldext]")
+         end if
+      end function
+
+      public function text(string)
+         Dim strIndex
+         For strIndex = 1 To Len(string)
+               key Mid(string, strIndex, 1)
+         Next
+      end function
+
+      public function key(action)
+         autECLSession.autECLOIA.WaitForInputReady
+         autECLSession.autECLPS.SendKeys action
+      end function
+
+      public function setCursor(col, row)
+         autECLSession.autECLOIA.WaitForInputReady
+         Dim curcol, correctionCol
+         Dim currow, correctionRow
+         curcol = autECLSession.autECLPS.CursorPosCol
+         currow = autECLSession.autECLPS.CursorPosRow
+         correctionCol = col - curcol
+         correctionRow = row - currow
+         dim i
+         i = 0
+         if correctionCol > 0 Then
+               for i = 1 to correctionCol
+                  key("[right]")
+               next
+         else
+               for i = 1 to correctionCol * -1
+                  key("[left]")
+               next
+         end if
+
+         i = 0
+         if correctionRow > 0 Then
+               for i = 1 to correctionRow
+                  key("[down]")
+                  next
+               else
+               for i = 1 to correctionRow * -1
+                  key("[up]")
+               next
+         end if
+      end function
+
+   end Class
+
+   Class CommandClass
+      public function create(safeString, posX, posY, command)
+         Dim obj
+         Set obj = CreateObject("Scripting.Dictionary")
+         obj("keystroke") = command
+         obj("safeString") = safeString
+         obj("posX") = posX
+         obj("posY") = posY
+         Set create = obj
+      end function
+      
+      public function execute(commands, screen)
+         dim command
+         for each command in commands
+            if checkAndExecute(command, screen) = false Then
+               execute = false
+               exit for
+            end if
+         next
+      end function
+
+      public function checkAndExecute(command, screen)
+         if screen.check(command("posX"), command("posY"), command("safeString")) Then
+            autECLSession.autECLOIA.WaitForInputReady
+            autECLSession.autECLPS.SendKeys command("keystroke")
+            autECLSession.autECLOIA.WaitForInputReady
+            autECLSession.autECLPS.SendKeys "[enter]"
+            checkAndExecute = true
+         else
+            checkAndExecute = false
+         end if
+      end function
+   end Class
+
+

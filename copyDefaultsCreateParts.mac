@@ -1,0 +1,331 @@
+[PCOMM SCRIPT HEADER]
+LANGUAGE=VBSCRIPT
+DESCRIPTION=
+[PCOMM SCRIPT SOURCE]
+OPTION EXPLICIT
+autECLSession.SetConnectionByName(ThisSessionName)
+    setUpMacro
+    sub setUpMacro()
+        autECLSession.autECLOIA.WaitForAppAvailable
+        autECLSession.autECLOIA.WaitForInputReady
+        moveToCorrectCursorPos 7, 20
+        if FindScreenText(34, 3, 13) = "CMS Main Menu" Then
+            copyDefaultsCreateParts
+        else
+            MsgBox("Please start on the CMS Main Menu")
+        end if
+    end sub
+
+sub copyDefaultsCreateParts()
+    Dim objShell, htaFilePath
+    Set objShell = CreateObject("WScript.Shell")
+    htaFilePath = buildFilePath("userforms\copyDefaultsCreateParts.hta") 
+    objShell.Run "mshta.exe """+htaFilePath+"""", 1, True
+
+    Dim textFilePath, values, workOrder, headerVals, descriptionVals, finalString
+    textFilePath = buildFilePath("text files\copyDefaultsCreateParts.txt")
+ 
+    set values = getWorkOrderValues(textFilePath, "Part Number|Copy From|Description|Drawing|Customer")
+    ' MsgBox TypeName(values)
+    if TypeName(values) = "Dictionary" Then
+       Dim message, result
+       message = "Do you want to create and print an order with: " + vbCrLf
+       message = message + "Part Number #" + values("Part Number") + vbCrLf
+       message = message + "Copy From " + values("Copy From")  + vbCrLf
+       message = message + "Description " + values("Description")  + vbCrLf
+       message = message + "Drawing # " + values("Drawing")  + vbCrLf
+       message = message + "Customer " + values("Customer")  + vbCrLf
+       
+       result = msgbox(message, vbYesNo)
+ 
+       if result = vbYes Then
+            if logInCreatePartNumbers() And enterPartNumber(values("Part Number"), values("Copy From")) Then
+                if createPart(values("Drawing"), values("Description"), values("Customer")) Then
+                    logOut 1, 3
+                end if
+            end if
+       end if
+    end if
+end sub
+
+'Functions to copy defaults
+    function createPart(drawingNumber, description, customer)
+        if checkScreenText(18, 1, "Edit Global Manufactured") Then
+            moveToCorrectCursorPos 26, 5
+            enterString(description)
+            keystroke("[fldext]")
+            moveToCorrectCursorPos 46, 6
+            enterString(drawingNumber)
+            moveToCorrectCursorPos 26, 17
+            keystroke("[pf4]")
+            enterString(customer)
+            chop customer, 30
+            keystroke("[enter]")
+            Dim customerNum, currentCustomer, result
+            customerNum = Trim(FindScreenText(2, 5, 7))
+            currentCustomer = Trim(FindScreenText(11, 5, 30))
+            result = MsgBox("Do you want to set the customer for this part to be " + customerNum + vbtab + currentCustomer, vbYesNo)
+            if result = vbYes Then
+                keystroke("[pf1]")
+                keystroke("[enter]")
+            else
+                if findCorrectCustNum() <> true Then
+                    exit function
+                end if
+            end if
+            moveToCorrectCursorPos 29, 18
+            enterString(drawingNumber)
+            keystroke("[enter]")
+            if checkScreenText(25, 9, "Add Global Part into Current Plant") Then
+                keystroke("[pf1]")
+                keystroke("[enter]")
+                createPart = true
+            else
+                logOut 1, 3
+            end if
+        end if
+    end function
+    function findCorrectCustNum()
+        if MsgBox("Do you see the correct customer on the screen?", vbYesNo) = vbYes Then
+            Dim allCustomers, userOption, custArr, custNumber
+            allCustomers = getAllCustomers()
+            userOption = InputBox("Please enter the number of the customer you want (anything but a number will exit the program) " + vbCrLf + allCustomers)
+            if IsNumeric(userOption) And userOption <> "" Then
+                userOption = CInt(userOption)
+                custArr = Split(allCustomers, vbCrLf)
+                if userOption <= UBound(custArr) Then
+                    moveToCorrectCursorPos 11, userOption + 5
+                    keystroke("[pf1]")
+                    findCorrectCustNum = true
+                    exit function
+                end if
+            end if
+        else
+            Dim newName
+            newName = InputBox("Please re-enter the customer name." + vbCrLf + allCustomers)
+            if newName <> "" Then
+                moveToCorrectCursorPos 12, 21
+                enterString(newName)
+                chop newName, 30
+                keystroke("[enter]")
+                findCorrectCustNum = findCorrectCustNum()
+                exit function
+            end if
+        end if
+    end function
+    function enterPartNumber(number, copyFrom)
+        keystroke("[pf6]")
+        keystroke("[pf1]")
+        enterString(number)
+        moveToCorrectCursorPos 47, 13
+        enterString(copyFrom)
+        keystroke("[tab]")
+        moveToCorrectCursorPos 59, 15
+        enterString("111")
+        keystroke("[enter]")
+        if checkScreenText(18, 1, "Edit Global Manufactured") Then
+            enterPartNumber = true
+        else
+            if msgbox("It seems the part already exists, do you want to update it instead?", vbYesNo) = vbYes Then
+                keystroke("[pf7]")
+                moveToCorrectCursorPos 16, 20
+                enterString(number)
+                chop number, 30
+                keystroke("[enter]")
+                if Trim(FindScreenText(2, 5, 20)) = number Then
+                    keystroke("[pf2]")
+                    keystroke("[enter]")
+                    if checkScreenText(18, 1, "Edit Global Manufactured") Then
+                        enterPartNumber = true
+                    else
+                        logOut 2, 3
+                    end if
+                else
+                    MsgBox("Part Cannot be found, please check the part number and try again")
+                    logOut 2, 3
+                end if
+            else
+                logOut 2, 3
+            end if
+        end if
+    end function
+    function getAllCustomers()
+        Dim str, i
+        for i = 5 to 18 step 1
+            str = str + CStr(i - 5) + " - " + Trim(FindScreenText(2, i, 7)) + vbTab + Trim(FindScreenText(11, i, 31)) + vbCrLf
+        next
+        getAllCustomers = str
+    end function
+    function getWorkOrderValues(textFilePath, textNames)
+        Dim text, textFile, values, valueNames, obj
+        Set obj = CreateObject("Scripting.Dictionary")
+
+        text = readTextFile(textFilePath)
+        values = Split(text, vbCrLf)
+        textNames = Split(textNames, "|")
+
+        Dim i
+        if Ubound(values) < Ubound(textNames) Then
+            MsgBox("Something wrong with text file, ending function")
+            exit function
+        else
+            for i = 0 to Ubound(textNames) step 1
+                obj(textNames(i)) = Trim(values(i))
+            next
+            set getWorkOrderValues = obj
+        end if
+    end function
+'LOG INS / OUTS
+    function logInCreatePartNumbers()
+    Dim logInCreatePartNumbersArr(3)
+    Set logInCreatePartNumbersArr(0) = createCommand("CMS Main Menu", 34, 3, 4)
+    Set logInCreatePartNumbersArr(1) = createCommand("Inventory Management Main Menu", 26, 3, 1)
+    Set logInCreatePartNumbersArr(2) = createCommand("Inventory Control - Main Menu", 26, 3, 1)
+    Set logInCreatePartNumbersArr(3) = createCommand("Inventory Master Files Menu", 27, 3, 3)
+    if executeCommands(logInCreatePartNumbersArr) <> false Then
+        msgbox("Please start at the correct screen, the CMS Main Menu")
+        logInCreatePartNumbers = false
+    else
+        logInCreatePartNumbers = true
+    end if
+    end function
+    function logOut(numF7, numF3)
+        Dim i
+        For i = 1 To numF7
+            keystroke("[pf7]")
+        Next
+        For i = 1 To numF3
+            keystroke("[pf3]")
+        Next
+        autECLSession.autECLOIA.WaitForInputReady
+        if checkScreenText(34, 3, "CMS Main Menu") = true Then
+            logOut = true
+        else
+            logOut = false
+        end if
+    end function
+'Boring functions
+    'function to fldext if nessary
+    function chop(str, maxLength)
+        if Len(str) < maxLength Then
+            keystroke("[fldext]")
+        end if
+    end function
+    ' COMMANDS
+    function createCommand(safeString, posX, posY, command)
+    Dim obj
+    Set obj = CreateObject("Scripting.Dictionary")
+    obj("keystroke") = command
+    obj("safeString") = safeString
+    obj("posX") = posX
+    obj("posY") = posY
+    Set createCommand = obj
+    end function
+    function executeCommands(commands)
+    dim command
+    for each command in commands
+        if checkAndExecuteCommand(command) = false Then
+            executeCommands = false
+            exit for
+        end if
+    next
+    end function
+    function checkAndExecuteCommand(command)
+    if checkScreenText(command("posX"), command("posY"), command("safeString")) Then
+        keystroke command("keystroke")
+        keystroke "[enter]"
+        checkAndExecuteCommand = true
+    else
+        checkAndExecuteCommand = false
+    end if
+    end function
+    ' ENTER INFO
+    function enterString(string)
+    Dim strIndex
+    For strIndex = 1 To Len(string)
+        keystroke Mid(string, strIndex, 1)
+    Next
+    end function
+    function keystroke(key)
+    autECLSession.autECLOIA.WaitForInputReady
+    autECLSession.autECLPS.SendKeys key
+    end function
+    ' SCREEN TEXT
+    function checkScreenText(startRow, startCol, text)
+    if FindScreenText(startRow, startCol, Len(text)) = text Then
+        checkScreenText = true
+    else
+        checkScreenText = false
+    end if
+    end function
+    function FindScreenText(startRow, startCol, length)
+    autECLSession.autECLOIA.WaitForInputReady
+    FindScreenText = Mid(autECLSession.autECLPS.GetText(), (startCol - 1) * 80 + startRow, length)
+    end function
+    'MOVE TO POSITION
+    function moveToCorrectCursorPos(col, row)
+    autECLSession.autECLOIA.WaitForInputReady
+    Dim curcol, correctionCol
+    Dim currow, correctionRow
+    curcol = autECLSession.autECLPS.CursorPosCol
+    currow = autECLSession.autECLPS.CursorPosRow
+    correctionCol = col - curcol
+    correctionRow = row - currow
+    dim i
+    i = 0
+    if correctionCol > 0 Then
+        for i = 1 to correctionCol
+            keystroke("[right]")
+        next
+    else
+        for i = 1 to correctionCol * -1
+            keystroke("[left]")
+        next
+    end if
+
+    i = 0
+    if correctionRow > 0 Then
+        for i = 1 to correctionRow
+            keystroke("[down]")
+            next
+    else
+        for i = 1 to correctionRow * -1
+            keystroke("[up]")
+        next
+    end if
+
+    end function
+    ' READING AND WRITING TEXT FILES
+    function buildFilePath(name)
+    dim textFilePath, fso, currentDirectory
+    Set fso = CreateObject("Scripting.FileSystemObject")
+    currentDirectory = fso.GetAbsolutePathName(".")
+    textFilePath = fso.BuildPath(currentDirectory, name)
+    buildFilePath = textFilePath
+    end function
+    function writeToTextFile(filePath, string)
+    Dim objFSO, objFile
+    Set objFSO = CreateObject("Scripting.FileSystemObject")
+
+    Set objFile = objFSO.CreateTextFile(filePath, True)
+
+    objFile.Write(string)
+
+    objFile.Close
+
+    Set objFile = Nothing
+    Set objFSO = Nothing
+    end function
+    function readTextFile(filePath)
+    Dim objFSO, objTextFile, strContents
+
+    Set objFSO = CreateObject("Scripting.FileSystemObject")
+    Set objTextFile = objFSO.OpenTextFile(filePath, 1)
+
+    strContents = objTextFile.ReadAll
+
+    objTextFile.Close
+    Set objTextFile = Nothing
+    Set objFSO = Nothing
+    readTextFile = strContents
+    end function

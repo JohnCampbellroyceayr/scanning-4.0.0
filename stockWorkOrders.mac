@@ -1,0 +1,466 @@
+[PCOMM SCRIPT HEADER]
+LANGUAGE=VBSCRIPT
+DESCRIPTION=
+[PCOMM SCRIPT SOURCE]
+OPTION EXPLICIT
+autECLSession.SetConnectionByName(ThisSessionName)
+
+REM This line calls the macro subroutine
+subSub1_
+
+sub subSub1_()
+   autECLSession.autECLOIA.WaitForAppAvailable
+   autECLSession.autECLOIA.WaitForInputReady
+   Dim objShell
+   Set objShell = CreateObject("WScript.Shell")
+   objShell.Run "cmd.exe /c python.exe ""c:/Users/John Campbell/Documents/John Coding projects/python/findorders/main program/main.py"" && exit", 1, True
+
+   'Create work orders
+   Dim workOrders
+   workOrders = readTextFile("C:\Users\John Campbell\AppData\Roaming\IBM\Client Access\Emulator\private\readFrom.txt")
+   Dim defaultDate
+   'change the date here
+   defaultDate = "12/30/30"
+
+   if logInCreateWorkOrders() Then
+      if prepareWorkOrders() Then
+         Dim workOrdersCreatedArr
+         workOrdersCreatedArr = createAllWorkOrders(workOrders, defaultDate)
+         if workOrdersCreatedArr(0) = true Then
+            ' Find and print work orders
+            if logOutCreateWorkOrders() Then
+               if logInPrintWorkOrders() Then
+                  if printWorkOrders(workOrdersCreatedArr(1), workOrdersCreatedArr(2)) = true Then
+                     if setDefaults() Then
+                        autECLSession.autECLOIA.WaitForInputReady
+                        autECLSession.autECLPS.SendKeys "[pf1]"
+                     end if
+                  end if
+               end if
+            end if
+            ' Find and print work orders
+         else 
+            MsgBox("Fail")
+         end if
+      end if
+   else
+      MsgBox("Fail")
+   end if
+
+end sub
+
+function readTextFile(filePath)
+   Dim objFSO, objTextFile, strContents
+
+   Set objFSO = CreateObject("Scripting.FileSystemObject")
+   Set objTextFile = objFSO.OpenTextFile(filePath, 1)
+   
+   strContents = objTextFile.ReadAll
+
+   objTextFile.Close
+   Set objTextFile = Nothing
+   Set objFSO = Nothing
+   readTextFile = strContents
+end function
+
+function logInCreateWorkOrders()
+   if FindScreenText(34, 3, 13) = "CMS Main Menu" Then
+      autECLSession.autECLPS.SendKeys "3"
+      autECLSession.autECLPS.SendKeys "[enter]"
+      autECLSession.autECLOIA.WaitForInputReady
+      if FindScreenText(25, 3, 31) = "Production Management Main Menu" Then
+         autECLSession.autECLPS.SendKeys "8"
+         autECLSession.autECLPS.SendKeys "[enter]"
+         autECLSession.autECLOIA.WaitForInputReady
+         if FindScreenText(21, 3, 39) = "Maintain Current Production - Main Menu" Then
+            autECLSession.autECLPS.SendKeys "1"
+            autECLSession.autECLPS.SendKeys "[enter]"
+            autECLSession.autECLOIA.WaitForInputReady
+            if FindScreenText(29, 3, 23) = "Release Production Menu" Then
+               autECLSession.autECLPS.SendKeys "1"
+               autECLSession.autECLPS.SendKeys "[enter]"
+               autECLSession.autECLOIA.WaitForInputReady
+               if FindScreenText(18, 1, 47) = "Production Management - Firm Planned Production" Then
+                  logInCreateWorkOrders = true
+               else
+                  MsgBox("On the wrong screen")
+                  MsgBox(FindScreenText(18, 1, 47))
+               end if
+            else
+               MsgBox("On the wrong screen")
+            end if
+         else
+            MsgBox("On the wrong screen")
+         end if
+      else
+         MsgBox("On the wrong screen")
+      end if
+   else
+      MsgBox("On the wrong screen, please start on the CMS Main Menu screen (the screen when you first log in)")
+   end if
+end function
+
+function prepareWorkOrders()
+   autECLSession.autECLOIA.WaitForInputReady
+   autECLSession.autECLPS.SendKeys "[pf6]"
+   autECLSession.autECLOIA.WaitForInputReady
+   if FindScreenText(25, 11, 24) = "Clear MRP Planned Orders" Then
+      autECLSession.autECLOIA.WaitForInputReady
+      autECLSession.autECLPS.SendKeys "y"
+      autECLSession.autECLOIA.WaitForInputReady
+      autECLSession.autECLPS.SendKeys "[enter]"
+      autECLSession.autECLOIA.WaitForInputReady
+      prepareWorkOrders = true
+   end if
+end function
+
+function createAllWorkOrders(orders, defaultDate)
+   Dim linesArray
+   Dim firstPartNumberAdded, lastPartNumberAdded
+   linesArray = Split(orders, vbCrLf)
+   if UBound(linesArray) + 1 > 0 Then
+      Dim line
+      For Each line In linesArray
+         Dim order
+         order = Split(line, vbTab)
+         if UBound(order) > 0 Then
+            autECLSession.autECLPS.SendKeys "[pf1]"
+            autECLSession.autECLOIA.WaitForInputReady
+            if createWorkOrder(order(0), order(1), defaultDate) = true Then
+               if IsEmpty(firstPartNumberAdded) Then
+                  firstPartNumberAdded = order(0)
+               end if
+               lastPartNumberAdded = order(0)
+            else
+               MsgBox("Failed to add part number " & order(0))
+               createAllWorkOrders(0) = false
+               Exit For
+            end if
+         else 
+            MsgBox("skipping line " & line)
+         end if
+      Next
+   else
+      MsgBox("Please add some orders")
+      createAllWorkOrders(0) = false
+   end if
+   Dim returnArr(2)
+
+   returnArr(0) = true
+   returnArr(1) = firstPartNumberAdded
+   returnArr(2) = lastPartNumberAdded
+
+   createAllWorkOrders = returnArr
+
+end function
+
+function checkWorkOrder(partNumber, quantity, date)
+   if Len(partNumber) <= 20 And Len(partNumber) > 0 And Len(quantity) < 7 And ContainsOnlyNumbers(quantity) And ContainsOnlyNumbers(Replace(date, "/", "")) And Len(date) = 8 Then
+      checkWorkOrder = true
+   else
+      if Len(partNumber) <= 20 Then
+      else
+         MsgBox("Part number is too long")
+      end if
+      if Len(partNumber) > 0 Then
+      else
+         MsgBox("Part number contains no characters")
+      end if
+      if Len(quantity) < 7 Then
+      else
+         MsgBox("quantity is too large")
+      end if
+      if ContainsOnlyNumbers(quantity) Then
+      else
+         MsgBox("quantity contains characters other than numbers")
+      end if
+      if ContainsOnlyNumbers(Replace(date, "/", "")) Then
+      else
+         MsgBox("Date does not contain only numbers and / ")
+      end if
+      if Len(date) = 8 Then
+      else
+         MsgBox("date is not long enough or too long")
+      end if
+      checkWorkOrder = false
+   end if
+end function
+
+function ContainsOnlyNumbers(input)
+   Dim i
+    For i = 1 To Len(input)
+        If Not IsNumeric(Mid(input, i, 1)) Then
+            ContainsOnlyNumbers = False
+            Exit function
+        end If
+    Next
+    ContainsOnlyNumbers = True
+end function
+
+function createWorkOrder(partNumber, quantity, date)
+   autECLSession.autECLOIA.WaitForInputReady
+   if checkWorkOrder(partNumber, quantity, date) And checkScreenText(42, 11, "Part #") Then
+      Dim partNumberStrIndex
+      For partNumberStrIndex = 1 To Len(partNumber)
+         autECLSession.autECLOIA.WaitForInputReady
+         autECLSession.autECLPS.SendKeys Mid(partNumber, partNumberStrIndex, 1)
+      Next
+      autECLSession.autECLOIA.WaitForInputReady
+      if Len(partNumber) < 20 Then
+         autECLSession.autECLPS.SendKeys "[fldext]"
+      end if
+      autECLSession.autECLOIA.WaitForInputReady
+
+      Dim dateStrIndex
+      For dateStrIndex = 1 To Len(date)
+         if Mid(date, dateStrIndex, 1) <> "/" Then
+            autECLSession.autECLOIA.WaitForInputReady
+            autECLSession.autECLPS.SendKeys Mid(date, dateStrIndex, 1)
+         end if
+      Next
+      autECLSession.autECLOIA.WaitForInputReady
+      if Trim(FindScreenText(50, 11, 20)) = partNumber And checkScreenText(50, 12, date) Then
+         autECLSession.autECLPS.SendKeys "[enter]"
+         autECLSession.autECLOIA.WaitForInputReady
+         if checkScreenText(24, 7, partNumber) And checkScreenText(24, 11, date) Then
+            autECLSession.autECLOIA.WaitForInputReady
+            Dim quantityStrIndex
+            For quantityStrIndex = 1 To Len(quantity)
+               autECLSession.autECLOIA.WaitForInputReady
+               autECLSession.autECLPS.SendKeys Mid(quantity, quantityStrIndex, 1)
+               autECLSession.autECLOIA.WaitForInputReady
+            Next
+            autECLSession.autECLPS.SendKeys "[fldext]"
+            autECLSession.autECLOIA.WaitForInputReady
+            if Trim(FindScreenText(56, 7, 8)) = quantity Then
+               autECLSession.autECLPS.SendKeys "[enter]"
+               autECLSession.autECLOIA.WaitForInputReady
+               
+               '<hello> Commement in between the lines to not make it auto save the work orders
+               ' autECLSession.autECLPS.SendKeys "[enter]"
+               ' createWorkOrder = true
+               '</hello> Commement in between the lines to make it auto save the work orders
+
+               '<hello> Commement out between the lines to make it auto save the work orders
+               autECLSession.autECLPS.SendKeys "[pf1]"
+               autECLSession.autECLOIA.WaitForInputReady
+               if checkScreenText(35, 8, "Auto Production Posting") Then
+                  autECLSession.autECLOIA.WaitForInputReady
+                  autECLSession.autECLPS.SendKeys "N"
+                  autECLSession.autECLOIA.WaitForInputReady
+                  autECLSession.autECLPS.SendKeys "[enter]"
+                  createWorkOrder = true
+               else 
+                  createWorkOrder = true
+               end if
+               '</hello> Commement out between the lines to make it auto save the work orders
+
+            else
+               MsgBox("Check input values")
+            end if
+         else
+            MsgBox("Part number or date entered incorrectly, check input values")
+         end if
+      else
+         MsgBox("Part number or date entered incorrectly, check input values")
+      end if
+   else 
+      MsgBox("Part entered incorrectly")
+      MsgBox(checkScreenText(42, 11, "Part #"))
+      MsgBox(FindScreenText(42, 11, 6))
+   end if
+end function
+
+function checkScreenText(startRow, startCol, text)
+   if FindScreenText(startRow, startCol, Len(text)) = text Then
+      checkScreenText = true
+   else
+      checkScreenText = false
+   end if
+end function
+
+function FindScreenText(startRow, startCol, length)
+   FindScreenText = Mid(autECLSession.autECLPS.GetText(), (startCol - 1) * 80 + startRow, length) 'if it does not work, I am not sure what the "80" does
+end function
+
+' these are the functions for the 2nd part of the program (finding and printing)
+
+function printWorkOrders(firstPartNumber, lastPartNumber)
+   autECLSession.autECLOIA.WaitForInputReady
+   autECLSession.autECLPS.SendKeys "[pf4]"
+   autECLSession.autECLOIA.WaitForInputReady
+   if findPartNumber(firstPartNumber) Then
+      autECLSession.autECLOIA.WaitForInputReady
+      autECLSession.autECLPS.SendKeys "[down]"
+      autECLSession.autECLOIA.WaitForInputReady
+      autECLSession.autECLPS.SendKeys "[pf4]"
+      if findPartNumber(lastPartNumber) Then
+         printWorkOrders = true
+      end if
+   end if
+end function
+
+function findPartNumber(partNumber)
+   autECLSession.autECLOIA.WaitForInputReady
+   if checkScreenText(21, 1, "Production Management - Current Work Orders") Then
+      autECLSession.autECLPS.SendKeys "[pf5]"
+      autECLSession.autECLPS.SendKeys "[enter]"
+      autECLSession.autECLOIA.WaitForInputReady
+      if checkScreenText(16, 4, "*") <> true Then
+         autECLSession.autECLPS.SendKeys "[pf5]"
+         autECLSession.autECLPS.SendKeys "[enter]"
+         autECLSession.autECLOIA.WaitForInputReady
+      else
+
+      end if
+      if checkScreenText(16, 4, "*") Then
+         ' select first part number
+         Dim partNumberStrIndex
+         For partNumberStrIndex = 1 To Len(partNumber)
+            autECLSession.autECLOIA.WaitForInputReady
+            autECLSession.autECLPS.SendKeys Mid(partNumber, partNumberStrIndex, 1)
+         Next
+         autECLSession.autECLOIA.WaitForInputReady
+         autECLSession.autECLPS.SendKeys "[fldext]"
+         if Len(partNumber) < 20 Then
+            autECLSession.autECLOIA.WaitForInputReady
+            autECLSession.autECLPS.SendKeys "[fldext]"
+         end if
+         autECLSession.autECLOIA.WaitForInputReady
+         autECLSession.autECLPS.SendKeys "[enter]"
+         if Trim(FindScreenText(12, 21, 20)) = partNumber Then
+            Dim indexOffset
+            indexOffset = 0
+            autECLSession.autECLOIA.WaitForInputReady
+            while Trim(FindScreenText(15, 7 + indexOffset, 20)) = partNumber
+               indexOffset = indexOffset + 1
+               if indexOffset > 12 Then
+                  indexOffset = 0
+                  autECLSession.autECLOIA.WaitForInputReady
+                  autECLSession.autECLPS.SendKeys "[roll up]"
+                  autECLSession.autECLOIA.WaitForInputReady
+               end if
+            wend
+            indexOffset = indexOffset - 1
+            if indexOffset = -1 Then
+               autECLSession.autECLOIA.WaitForInputReady
+               autECLSession.autECLPS.SendKeys "[roll down]"
+               indexOffset = 12
+            end if
+            Dim firstOrderNumber
+            firstOrderNumber = Trim(FindScreenText(2, 7 + indexOffset, 10))
+            autECLSession.autECLOIA.WaitForInputReady
+            Dim i
+            for i = 1 to calculateOffset(indexOffset) step 1
+               autECLSession.autECLOIA.WaitForInputReady
+               autECLSession.autECLPS.SendKeys "[up]"
+            next
+            autECLSession.autECLOIA.WaitForInputReady
+            autECLSession.autECLPS.SendKeys "[pf1]"
+            findPartNumber = true
+         else
+            MsgBox(Trim(FindScreenText(12, 21, 20)))
+         end if
+      else
+         MsgBox("On wrong screen")
+      end if
+   else
+      MsgBox("On wrong screen")
+   end if
+end function
+
+
+function calculateOffset(index)
+   calculateOffset = 14 - index
+end function
+
+function logInPrintWorkOrders()
+   autECLSession.autECLOIA.WaitForInputReady
+   autECLSession.autECLPS.SendKeys "3"
+   autECLSession.autECLPS.SendKeys "[enter]"
+   autECLSession.autECLOIA.WaitForInputReady
+   if checkScreenText(25, 3, "Production Management Main Menu") Then
+      autECLSession.autECLPS.SendKeys "8"
+      autECLSession.autECLPS.SendKeys "[enter]"
+      autECLSession.autECLOIA.WaitForInputReady
+      if checkScreenText(21, 3, "Maintain Current Production - Main Menu") Then
+         autECLSession.autECLPS.SendKeys "5"
+         autECLSession.autECLPS.SendKeys "[enter]"
+         autECLSession.autECLOIA.WaitForInputReady
+         if checkScreenText(16, 3, "Production Maintenance - Reports and Listings Menu") Then
+            autECLSession.autECLPS.SendKeys "8"
+            autECLSession.autECLPS.SendKeys "[enter]"
+            autECLSession.autECLOIA.WaitForInputReady
+            if checkScreenText(28, 3, "Print Work Order Routings") Then
+               autECLSession.autECLPS.SendKeys "2"
+               autECLSession.autECLPS.SendKeys "[enter]"
+               autECLSession.autECLOIA.WaitForInputReady
+               if checkScreenText(15, 1, "Production Management - Print Range of Work Orders") Then
+                  logInPrintWorkOrders = true
+               else
+                  MsgBox("On the wrong screen")
+               end if
+            else
+               MsgBox("On the wrong screen")
+            end if
+         else
+            MsgBox("On the wrong screen")
+         end if
+      else
+         MsgBox("On the wrong screen")
+      end if
+   else
+      MsgBox("On the wrong screen, please start at main screen")
+   end if
+end function
+
+function logOutCreateWorkOrders()
+   autECLSession.autECLOIA.WaitForInputReady
+   if FindScreenText(18, 1, 47) = "Production Management - Firm Planned Production" Then
+      autECLSession.autECLPS.SendKeys "[pf7]"
+      autECLSession.autECLOIA.WaitForInputReady
+      if FindScreenText(29, 3, 23) = "Release Production Menu" Then
+         autECLSession.autECLPS.SendKeys "[pf3]"
+         autECLSession.autECLOIA.WaitForInputReady
+         if FindScreenText(21, 3, 39) = "Maintain Current Production - Main Menu" Then
+            autECLSession.autECLPS.SendKeys "[pf3]"
+            autECLSession.autECLOIA.WaitForInputReady
+            if FindScreenText(25, 3, 31) = "Production Management Main Menu" Then
+               autECLSession.autECLPS.SendKeys "[pf3]"
+               autECLSession.autECLOIA.WaitForInputReady
+               if FindScreenText(34, 3, 13) = "CMS Main Menu" Then
+                  logOutCreateWorkOrders = true
+               else
+                  MsgBox("On the wrong screen, please start on the CMS Main Menu screen (the screen when you first log in)")
+               end if
+            else
+               MsgBox("On the wrong screen")
+            end if
+         else
+            MsgBox("On the wrong screen")
+         end if
+      else
+         MsgBox("On the wrong screen")
+      end if
+   else
+      MsgBox("On the wrong screen, please start on Production Management - Firm Planned Production")
+   end if
+end function
+
+function setDefaults()
+   Dim i
+   for i = 1 to 8 step 1
+      autECLSession.autECLOIA.WaitForInputReady
+      autECLSession.autECLPS.SendKeys "[down]"
+   next
+   for i = 1 to 5 step 1
+      autECLSession.autECLOIA.WaitForInputReady
+      autECLSession.autECLPS.SendKeys "N"
+   next
+   for i = 1 to 5 step 1
+      if checkScreenText(30, 14 + i, "N") <> true Then
+         setDefaults = false
+      end if
+   next
+   setDefaults = true
+end function

@@ -1,0 +1,17 @@
+        Order:    1114736     Customer: PE0016   PELLA CORPORATION             
+   Order Date: 10/17/23   Customer P/O: 2283403-0                              
+   Order Type: S                 Phone: 6416211000                             
+ Order Status: A           Order Total:      234.37  US                        
+
+Required Date: 11/24/23		Ship via: GROUND
+
+
+Item Part/Description            Qty Ordered OUnt         Shipped    Extension
+1  120-ROY-08-S7899                  1.00  EA                         234.37
+   7.740"D X 50MMB X 24T X .125"K
+   CARBIDE TIP SAW  DW#S7899
+2  ETCH-ROYCE                              EA
+   ROYCE ETCHING, PART # & DESC
+   STANDARD BOX & LABELLING
+   ***********************
+   ALSO PRT# 359359 GO#2

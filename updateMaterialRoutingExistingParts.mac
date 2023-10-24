@@ -1,0 +1,405 @@
+[PCOMM SCRIPT HEADER]
+LANGUAGE=VBSCRIPT
+DESCRIPTION=
+[PCOMM SCRIPT SOURCE]
+OPTION EXPLICIT
+autECLSession.SetConnectionByName(ThisSessionName)
+    setUpMacro
+    sub setUpMacro()
+        autECLSession.autECLOIA.WaitForAppAvailable
+        autECLSession.autECLOIA.WaitForInputReady
+        moveToCorrectCursorPos 7, 20
+        if FindScreenText(34, 3, 13) = "CMS Main Menu" Then
+            updateMaterialRoutingExistingParts
+        else
+            MsgBox("Please start on the CMS Main Menu")
+        end if
+    end sub
+
+sub updateMaterialRoutingExistingParts()
+
+    Dim objShell, htaFilePath
+    Set objShell = CreateObject("WScript.Shell")
+    htaFilePath = buildFilePath("userforms\updateMaterialRoutingExistingParts.hta") 
+    objShell.Run "mshta.exe """+htaFilePath+"""", 1, True
+
+    Dim textFilePath, values, workOrder, headerVals, descriptionVals, finalString
+    textFilePath = buildFilePath("text files\updateMaterialRoutingExistingParts.txt")
+
+    set values = getWorkOrderValues(textFilePath, "Part Number|Steel|Per Sheet|Tip|Teeth|New Seqence|Seq Code")
+    ' MsgBox TypeName(values)
+    if TypeName(values) = "Dictionary" Then
+        Dim message
+        message = "Do you want to update " + vbCrLf
+        message = message + "Part Number: " + values("Part Number") + vbCrLf
+        message = message + "Set Steel to: " + values("Steel") + vbCrLf
+        message = message + "Set number per sheet to: " + values("Per Sheet") + vbCrLf
+        message = message + "Set tip to: " + values("Tip") + vbCrLf
+        message = message + "Set number of teeth to: " + values("Teeth") + vbCrLf
+        message = message + "Add seqence: " + values("New Seqence") + vbCrLf
+        message = message + "With seqence code: " + values("Seq Code") + vbCrLf
+        if MsgBox(message, vbYesNo) = vbYes Then
+            if logInUpdateMaterial() And enterPartNumber(values("Part Number")) Then
+                changeMaterials values("Steel"), values("Per Sheet"), values("Tip"), values("Teeth")
+                addSeqence values("New Seqence"), values("Seq Code")
+                logOut 4, 2
+            else
+                logOut 2, 2
+            end if
+        end if
+    end if
+end sub
+
+'Functions to copy defaults
+function addSeqence(seq, code)
+    if checkScreenText(23, 1, "Production Management - Summary Screen") And seq <> "" And code <> "" Then
+        keystroke("[pf2]")
+        keystroke("[pf1]")
+        enterString(seq)
+        keystroke("[fldext]")
+        keystroke("[enter]")
+        if checkScreenText(24, 1, "Production Methods - Routing Standards") Then
+            moveToCorrectCursorPos 24, 6
+            enterString(code)
+            keystroke("[enter]")
+            keystroke("[pf7]")
+        else
+            keystroke("[pf7]")
+            keystroke("[pf7]")
+        end if
+    end if
+end function
+function changeMaterials(steel, persheet, tip, teeth)
+    keystroke("[pf3]")
+    if steel <> "" And persheet <> "" Then
+        moveToCorrectCursorPos 12, 9
+        keystroke("[pf2]")
+        keystroke("[fldext]")
+        moveToCorrectCursorPos 40, 12
+        keystroke("[enter]")
+        keystroke("[pf4]")
+        if checkScreenText(4, 4, "Purchased") = false Then
+            keystroke("[pf6]")
+        end if
+        enterString(steel)
+        chop steel, 20
+        keystroke("[enter]")
+        Dim curSteel, result
+        curSteel = Trim(FindScreenText(2, 8, 20))
+        result = MsgBox("Do you want to set the steel to be " + curSteel, vbYesNo)
+        if result = vbYes Then
+            keystroke("[pf1]")
+            keystroke("[enter]")
+            moveToCorrectCursorPos 54, 10
+            enterString(persheet)
+            keystroke("[fldext]")
+            keystroke("[enter]")
+        else
+            if findCorrectSteel() <> true Then
+                keystroke("[pf7]")
+                exit function
+            else
+                moveToCorrectCursorPos 54, 10
+                enterString(persheet)
+                keystroke("[fldext]")
+                keystroke("[enter]")
+            end if
+        end if
+    end if
+    if tip <> "" And teeth <> "" Then
+        moveToCorrectCursorPos 11, 10
+        keystroke("[pf2]")
+        if checkScreenText(41, 8, "Update Mode") Then
+            moveToCorrectCursorPos 40, 12
+            keystroke("[pf4]")
+            moveToCorrectCursorPos 12, 20
+            enterString(tip)
+            chop tip, 20
+            keystroke("[enter]")
+            Dim curTip, result2
+            curTip = Trim(FindScreenText(2, 8, 20))
+            result2 = MsgBox("Do you want to set the tip to be " + curTip, vbYesNo)
+            if result2 = vbYes Then
+                keystroke("[pf1]")
+                keystroke("[enter]")
+                moveToCorrectCursorPos 40, 13
+                enterString(teeth)
+                chop teeth, 10
+                keystroke("[enter]")
+                keystroke("[pf7]")
+            else
+                if findCorrectTip() <> true Then
+                    keystroke("[pf7]")
+                    exit function
+                else
+                    moveToCorrectCursorPos 40, 13
+                    enterString(teeth)
+                    chop teeth, 10
+                    keystroke("[enter]")
+                end if
+            end if
+        end if
+    end if
+    keystroke("[pf7]")
+end function
+function enterPartNumber(number)
+    enterString(number)
+    chop number, 20
+    keystroke("[enter]")
+    keystroke("[pf2]")
+    if Trim(FindScreenText(49, 12, 20)) = number Then
+        keystroke("[enter]")
+        enterPartNumber = true
+    else
+        MsgBox("Part Number not found, please make sure it is correct")
+    end if
+end function
+
+function findCorrectTip()
+    if MsgBox("Do you see the correct tip on the screen?", vbYesNo) = vbYes Then
+        Dim allTips, userOption, tipArr
+        allTips = getAllTips()
+        userOption = InputBox("Please enter the number of the tip you want (anything but a number will exit the program) " + vbCrLf + allTips)
+        if IsNumeric(userOption) And userOption <> "" Then
+            userOption = CInt(userOption)
+            tipArr = Split(allTips, vbCrLf)
+            if userOption <= UBound(tipArr) Then
+                moveToCorrectCursorPos 11, userOption + 8
+                keystroke("[pf1]")
+                findCorrectTip = true
+                exit function
+            end if
+        end if
+    else
+        Dim newName
+        newName = InputBox("Please re-enter the tip." + vbCrLf + allTips)
+        if newName <> "" Then
+            moveToCorrectCursorPos 12, 20
+            enterString(newName)
+            chop newName, 30
+            keystroke("[enter]")
+            findCorrectTip = findCorrectTip()
+            exit function
+        end if
+    end if
+end function
+
+function getAllTips()
+    Dim str, i
+    for i = 8 to 18 step 1
+        str = str + CStr(i - 8) + " - " + Trim(FindScreenText(2, i, 20)) + vbCrLf
+    next
+    getAllTips = str
+end function
+
+function findCorrectSteel()
+    if MsgBox("Do you see the correct steel on the screen?", vbYesNo) = vbYes Then
+        Dim allSteel, userOption, steelArr
+        allSteel = getAllSteel()
+        userOption = InputBox("Please enter the number of the steel you want (anything but a number will exit the program) " + vbCrLf + allSteel)
+        if IsNumeric(userOption) And userOption <> "" Then
+            userOption = CInt(userOption)
+            steelArr = Split(allSteel, vbCrLf)
+            if userOption <= UBound(steelArr) Then
+                moveToCorrectCursorPos 11, userOption + 8
+                keystroke("[pf1]")
+                findCorrectSteel = true
+                exit function
+            end if
+        end if
+    else
+        Dim newName
+        newName = InputBox("Please re-enter the steel." + vbCrLf + allSteel)
+        if newName <> "" Then
+            moveToCorrectCursorPos 12, 20
+            enterString(newName)
+            chop newName, 30
+            keystroke("[enter]")
+            findCorrectSteel = findCorrectSteel()
+            exit function
+        end if
+    end if
+end function
+
+function getAllSteel()
+    Dim str, i
+    for i = 8 to 18 step 1
+        str = str + CStr(i - 8) + " - " + Trim(FindScreenText(2, i, 20)) + vbCrLf
+    next
+    getAllSteel = str
+end function
+
+'LOG INS / OUTS
+        function logInUpdateMaterial()
+        Dim logInUpdateMaterialArr(2)
+        Set logInUpdateMaterialArr(0) = createCommand("CMS Main Menu", 34, 3, 3)
+        Set logInUpdateMaterialArr(1) = createCommand("Production Management Main Menu", 25, 3, 3)
+        Set logInUpdateMaterialArr(2) = createCommand("Production Method Maintenance and Utility Menu", 18, 3, 1)
+        if executeCommands(logInUpdateMaterialArr) <> false Then
+            msgbox("Please start at the correct screen, the CMS Main Menu")
+            logInUpdateMaterial = false
+        else
+            logInUpdateMaterial = true
+        end if
+        end function
+
+
+    function logOut(numF7, numF3)
+        Dim i
+        For i = 1 To numF7
+            keystroke("[pf7]")
+        Next
+        For i = 1 To numF3
+            keystroke("[pf3]")
+        Next
+        autECLSession.autECLOIA.WaitForInputReady
+        if checkScreenText(34, 3, "CMS Main Menu") = true Then
+            logOut = true
+        else
+            logOut = false
+        end if
+    end function
+'Boring functions
+    function getWorkOrderValues(textFilePath, textNames)
+        Dim text, textFile, values, valueNames, obj
+        Set obj = CreateObject("Scripting.Dictionary")
+
+        text = readTextFile(textFilePath)
+        values = Split(text, vbCrLf)
+        textNames = Split(textNames, "|")
+
+        Dim i
+        if Ubound(values) < Ubound(textNames) Then
+            MsgBox("Something wrong with text file, ending function")
+            exit function
+        else
+            for i = 0 to Ubound(textNames) step 1
+                obj(textNames(i)) = Trim(values(i))
+            next
+            set getWorkOrderValues = obj
+        end if
+    end function
+    'function to fldext if nessary
+    function chop(str, maxLength)
+        if Len(str) < maxLength Then
+            keystroke("[fldext]")
+        end if
+    end function
+    ' COMMANDS
+    function createCommand(safeString, posX, posY, command)
+    Dim obj
+    Set obj = CreateObject("Scripting.Dictionary")
+    obj("keystroke") = command
+    obj("safeString") = safeString
+    obj("posX") = posX
+    obj("posY") = posY
+    Set createCommand = obj
+    end function
+    function executeCommands(commands)
+    dim command
+    for each command in commands
+        if checkAndExecuteCommand(command) = false Then
+            executeCommands = false
+            exit for
+        end if
+    next
+    end function
+    function checkAndExecuteCommand(command)
+    if checkScreenText(command("posX"), command("posY"), command("safeString")) Then
+        keystroke command("keystroke")
+        keystroke "[enter]"
+        checkAndExecuteCommand = true
+    else
+        checkAndExecuteCommand = false
+    end if
+    end function
+    ' ENTER INFO
+    function enterString(string)
+    Dim strIndex
+    For strIndex = 1 To Len(string)
+        keystroke Mid(string, strIndex, 1)
+    Next
+    end function
+    function keystroke(key)
+    autECLSession.autECLOIA.WaitForInputReady
+    autECLSession.autECLPS.SendKeys key
+    end function
+    ' SCREEN TEXT
+    function checkScreenText(startRow, startCol, text)
+    if FindScreenText(startRow, startCol, Len(text)) = text Then
+        checkScreenText = true
+    else
+        checkScreenText = false
+    end if
+    end function
+    function FindScreenText(startRow, startCol, length)
+    autECLSession.autECLOIA.WaitForInputReady
+    FindScreenText = Mid(autECLSession.autECLPS.GetText(), (startCol - 1) * 80 + startRow, length)
+    end function
+    'MOVE TO POSITION
+    function moveToCorrectCursorPos(col, row)
+    autECLSession.autECLOIA.WaitForInputReady
+    Dim curcol, correctionCol
+    Dim currow, correctionRow
+    curcol = autECLSession.autECLPS.CursorPosCol
+    currow = autECLSession.autECLPS.CursorPosRow
+    correctionCol = col - curcol
+    correctionRow = row - currow
+    dim i
+    i = 0
+    if correctionCol > 0 Then
+        for i = 1 to correctionCol
+            keystroke("[right]")
+        next
+    else
+        for i = 1 to correctionCol * -1
+            keystroke("[left]")
+        next
+    end if
+
+    i = 0
+    if correctionRow > 0 Then
+        for i = 1 to correctionRow
+            keystroke("[down]")
+            next
+    else
+        for i = 1 to correctionRow * -1
+            keystroke("[up]")
+        next
+    end if
+
+    end function
+    ' READING AND WRITING TEXT FILES
+    function buildFilePath(name)
+    dim textFilePath, fso, currentDirectory
+    Set fso = CreateObject("Scripting.FileSystemObject")
+    currentDirectory = fso.GetAbsolutePathName(".")
+    textFilePath = fso.BuildPath(currentDirectory, name)
+    buildFilePath = textFilePath
+    end function
+    function writeToTextFile(filePath, string)
+    Dim objFSO, objFile
+    Set objFSO = CreateObject("Scripting.FileSystemObject")
+
+    Set objFile = objFSO.CreateTextFile(filePath, True)
+
+    objFile.Write(string)
+
+    objFile.Close
+
+    Set objFile = Nothing
+    Set objFSO = Nothing
+    end function
+    function readTextFile(filePath)
+    Dim objFSO, objTextFile, strContents
+
+    Set objFSO = CreateObject("Scripting.FileSystemObject")
+    Set objTextFile = objFSO.OpenTextFile(filePath, 1)
+
+    strContents = objTextFile.ReadAll
+
+    objTextFile.Close
+    Set objTextFile = Nothing
+    Set objFSO = Nothing
+    readTextFile = strContents
+    end function

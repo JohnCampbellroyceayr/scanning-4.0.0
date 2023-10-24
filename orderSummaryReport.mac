@@ -1,0 +1,316 @@
+[PCOMM SCRIPT HEADER]
+LANGUAGE=VBSCRIPT
+DESCRIPTION=
+[PCOMM SCRIPT SOURCE]
+OPTION EXPLICIT
+autECLSession.SetConnectionByName(ThisSessionName)
+
+setUpMacro
+
+sub setUpMacro()
+   autECLSession.autECLOIA.WaitForAppAvailable
+   autECLSession.autECLOIA.WaitForInputReady
+   moveToCorrectCursorPos 7, 20
+   if FindScreenText(34, 3, 13) = "CMS Main Menu" Then
+      orderSummaryReport
+   else
+      MsgBox("Please start on the CMS Main Menu")
+   end if
+end sub
+
+sub orderSummaryReport()
+   Dim textFilePath, workOrder, headerVals, descriptionVals, finalString
+   textFilePath = buildFilePath("orderSummaryReport.txt")
+
+   workOrder = removeZeros(Trim(InputBox("Please enter order number", "Order Summary Report")))
+   if workOrder <> "" Then
+      if loginOrderInquiry() Then
+         Dim foundWorkOrder
+         foundWorkOrder = findWorkOrder(workOrder)
+         if foundWorkOrder = "true" or foundWorkOrder = "completed" Then
+            headerVals = getHeaderVals()
+            descriptionVals = getAllDescriptions()
+            finalString = headerVals + vbCrLf
+            finalString = finalString + descriptionVals
+            logOut 2, 3
+            if foundWorkOrder = "completed" Then
+               MsgBox("Order is already completed")
+            end if
+            Dim objShell
+            writeToTextFile textFilePath, finalString
+            Set objShell = CreateObject("WScript.Shell")
+            objShell.Run "notepad.exe " + textFilePath
+         else
+            logOut 2, 3
+            MsgBox("Sales Order Does Not Exist")
+         end if
+      end if
+   end if
+
+
+end sub
+
+'OTHER FUNCTIONS FOR REPORTING THE WORK ORDER
+function getAllDescriptions()
+   goToTopOfList()
+   Dim offset_y, maxIndex, str, firstText
+   offset_y = 10
+   str = FindScreenText(2, 9, 78) + vbCrLf
+   firstText = FindScreenText(2, 10, 3)
+   while FindScreenText(7, offset_y, 1) <> " " And maxIndex < 200 And (firstText <> FindScreenText(2, offset_y, 3) or maxIndex = 0)
+      moveToCorrectCursorPos 7, offset_y
+      str = str + Trim(FindScreenText(1, offset_y, 79)) + vbCrLf
+      str = str + getDescription()
+      maxIndex = maxIndex + 1
+      offset_y = offset_y + 2
+
+      if offset_y = 20 Then
+         offset_y = 10
+         keystroke("[roll up]")
+      end if
+   wend
+   getAllDescriptions = str
+end function
+function getDescription()
+   keystroke("[pf2]")
+   if checkScreenText(23, 1, "Current Order Inquiry - Item Screen") OR checkScreenText(22, 1, "Completed Order Inquiry - Item Screen") Then
+      if checkScreenText(2, 23, "F1=Descr.") <> true Then
+         keystroke("[pf6]")
+      end if
+      keystroke("[pf1]")
+      Dim str, line, offset_y, maxIndex
+      offset_y = 8
+      line = Trim(FindScreenText(14, offset_y, 35))
+      while Trim(FindScreenText(14, 8, 35)) <> "" And maxIndex < 10
+         offset_y = offset_y + 1
+         if offset_y = 18 Then
+            offset_y = 8
+            maxIndex = maxIndex + 1
+            keystroke("[roll up]")
+         end if
+         if line <> "" Then
+            str = str + "   " + line + vbCrLf
+         end if
+         line = Trim(FindScreenText(14, offset_y, 35))
+      wend
+      getDescription = str
+      keystroke("[pf7]")
+      keystroke("[pf7]")
+   else
+      getDescription = "null"
+      keystroke("[pf7]")
+   end if
+end function
+function goToTopOfList()
+   Dim lastText, newText, maxIndex
+   newText = FindScreenText(4, 10, 10)
+   while lastText <> newText And maxIndex < 1000
+      maxIndex = maxIndex + 1
+      lastText = newText
+      keystroke("[roll down]")
+      newText = FindScreenText(4, 10, 10)
+   wend
+end function
+function getHeaderVals()
+   Dim returnString
+   returnString = FindScreenText(1, 3, 79) + vbCrLf
+   returnString = returnString + FindScreenText(1, 4, 79) + vbCrLf
+   returnString = returnString + FindScreenText(1, 5, 79) + vbCrLf
+   returnString = returnString + FindScreenText(1, 6, 79) + vbCrLf + vbCrLf
+   keystroke("[pf1]")
+   returnString = returnString + Trim(FindScreenText(1, 14, 25)) + vbTab + vbTab
+   keystroke("[roll up]")
+   returnString = returnString + Trim(FindScreenText(41, 10, 40)) + vbCrLf + vbCrLf
+   keystroke("[pf7]")
+   getHeaderVals = returnString
+end function
+function removeZeros(str)
+   Dim i, ch
+   For i = 1 To Len(str)
+      ch = Mid(str, i, 1)
+      If ch <> "0" Then
+         str = Mid(str, i, Len(str))
+         Exit For
+      End If
+   Next
+   removeZeros = str
+end function
+'LOG INS / OUTS
+function loginOrderInquiry()
+   Dim loginOrderInquiryArr(3)
+   Set loginOrderInquiryArr(0) = createCommand("CMS Main Menu", 34, 3, 1)
+   Set loginOrderInquiryArr(1) = createCommand("Order Management Main Menu", 28, 3, 1)
+   Set loginOrderInquiryArr(2) = createCommand("Order Processing - Main Menu", 27, 3, 7)
+   Set loginOrderInquiryArr(3) = createCommand("Order Processing - Inquiries Menu", 24, 3, 1)
+   if executeCommands(loginOrderInquiryArr) <> false Then
+      msgbox("Please start at the correct screen, the CMS Main Menu")
+      loginOrderInquiry = false
+   else
+      loginOrderInquiry = true
+   end if
+end function
+function logOut(numF7, numF3)
+   Dim i
+   For i = 1 To numF7
+      keystroke("[pf7]")
+   Next
+   For i = 1 To numF3
+      keystroke("[pf3]")
+   Next
+   autECLSession.autECLOIA.WaitForInputReady
+   if checkScreenText(34, 3, "CMS Main Menu") = true Then
+      logOut = true
+   else
+      logOut = false
+   end if
+end function
+'FIND WORK ORDER SCREEN
+function findWorkOrder(workOrder)
+   if checkScreenText(26, 1, "Order Inquiry By Order Number") Then
+      enterString(workOrder)
+      if Len(workOrder) < 10 Then
+         keystroke("[fldext]")
+      end if
+      keystroke("[enter]")
+      keystroke("[pf1]")
+      if Trim(FindScreenText(44, 18, 10)) = workOrder Then
+        keystroke("[enter]")
+        if checkScreenText(31, 1, "Current Order Inquiry") Then
+            findWorkOrder = "true"
+        end if
+      else
+         keystroke("[pf7]")
+         keystroke("[pf4]")
+         enterString(workOrder)
+         if Len(workOrder) < 10 Then
+            keystroke("[fldext]")
+         end if
+         keystroke("[enter]")
+         keystroke("[pf1]")
+         if Trim(FindScreenText(44, 18, 10)) = workOrder Then
+            keystroke("[enter]")
+            if checkScreenText(30, 1, "Completed Order Inquiry") Then
+               findWorkOrder = "completed"
+            end if
+         end if
+      end if
+   end if
+end function
+' COMMANDS
+function createCommand(safeString, posX, posY, command)
+   Dim obj
+   Set obj = CreateObject("Scripting.Dictionary")
+   obj("keystroke") = command
+   obj("safeString") = safeString
+   obj("posX") = posX
+   obj("posY") = posY
+   Set createCommand = obj
+end function
+function executeCommands(commands)
+   dim command
+   for each command in commands
+      if checkAndExecuteCommand(command) = false Then
+         executeCommands = false
+         exit for
+      end if
+   next
+end function
+function checkAndExecuteCommand(command)
+   if checkScreenText(command("posX"), command("posY"), command("safeString")) Then
+      keystroke command("keystroke")
+      keystroke "[enter]"
+      checkAndExecuteCommand = true
+   else
+      checkAndExecuteCommand = false
+   end if
+end function
+' ENTER INFO
+function enterString(string)
+   Dim strIndex
+   For strIndex = 1 To Len(string)
+      keystroke Mid(string, strIndex, 1)
+   Next
+end function
+function keystroke(key)
+   autECLSession.autECLOIA.WaitForInputReady
+   autECLSession.autECLPS.SendKeys key
+end function
+' SCREEN TEXT
+function checkScreenText(startRow, startCol, text)
+   if FindScreenText(startRow, startCol, Len(text)) = text Then
+      checkScreenText = true
+   else
+      checkScreenText = false
+   end if
+end function
+function FindScreenText(startRow, startCol, length)
+   autECLSession.autECLOIA.WaitForInputReady
+   FindScreenText = Mid(autECLSession.autECLPS.GetText(), (startCol - 1) * 80 + startRow, length)
+end function
+'MOVE TO POSITION
+function moveToCorrectCursorPos(col, row)
+   autECLSession.autECLOIA.WaitForInputReady
+   Dim curcol, correctionCol
+   Dim currow, correctionRow
+   curcol = autECLSession.autECLPS.CursorPosCol
+   currow = autECLSession.autECLPS.CursorPosRow
+   correctionCol = col - curcol
+   correctionRow = row - currow
+   dim i
+   i = 0
+   if correctionCol > 0 Then
+      for i = 1 to correctionCol
+         keystroke("[right]")
+      next
+   else
+      for i = 1 to correctionCol * -1
+         keystroke("[left]")
+      next
+   end if
+
+   i = 0
+   if correctionRow > 0 Then
+      for i = 1 to correctionRow
+         keystroke("[down]")
+         next
+   else
+      for i = 1 to correctionRow * -1
+         keystroke("[up]")
+      next
+   end if
+
+end function
+' READING AND WRITING TEXT FILES
+function buildFilePath(name)
+   dim textFilePath, fso, currentDirectory
+   Set fso = CreateObject("Scripting.FileSystemObject")
+   currentDirectory = fso.GetAbsolutePathName(".")
+   textFilePath = fso.BuildPath(currentDirectory, name)
+   buildFilePath = textFilePath
+end function
+function writeToTextFile(filePath, string)
+   Dim objFSO, objFile
+   Set objFSO = CreateObject("Scripting.FileSystemObject")
+
+   Set objFile = objFSO.CreateTextFile(filePath, True)
+
+   objFile.Write(string)
+
+   objFile.Close
+
+   Set objFile = Nothing
+   Set objFSO = Nothing
+end function
+function readTextFile(filePath)
+   Dim objFSO, objTextFile, strContents
+
+   Set objFSO = CreateObject("Scripting.FileSystemObject")
+   Set objTextFile = objFSO.OpenTextFile(filePath, 1)
+   
+   strContents = objTextFile.ReadAll
+
+   objTextFile.Close
+   Set objTextFile = Nothing
+   Set objFSO = Nothing
+   readTextFile = strContents
+end function

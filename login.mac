@@ -1,0 +1,190 @@
+[PCOMM SCRIPT HEADER]
+LANGUAGE=VBSCRIPT
+DESCRIPTION=
+[PCOMM SCRIPT SOURCE]
+OPTION EXPLICIT
+autECLSession.SetConnectionByName(ThisSessionName)
+
+'declare classses
+    Dim File
+    Set File = New FileClass
+    Dim Screen
+    Set Screen = New ScreenClass
+    Dim Input
+    Set Input = New InputClass
+
+login
+
+sub login()
+   autECLSession.autECLOIA.WaitForAppAvailable
+   autECLSession.autECLOIA.WaitForInputReady
+   if Screen.check(36, 1, "Sign On") Then
+        Input.setCursor 53, 6
+        Dim textFileData, user, password
+        textFileData = File.read(File.buildPath("local files/logins/default.txt"))
+        user = Trim(Split(textFileData, "|")(0))
+        password = getPassword(user)
+        if Len(user) < 10 Then
+            if Trim(user) <> "" Then
+                Input.text(user)
+                Input.key("[fldext]")
+                Input.text(password)
+                Input.key("[enter]")
+                if Screen.check(24, 1, "Attempt to Recover Interactive Job") Then
+                    Input.setCursor 7, 22
+                    Input.text("90")
+                    Input.key("[enter]")
+                    Input.key("[enter]")
+                    login()
+                    exit sub
+                end if
+                if Screen.check(36, 1, "Sign On") <> true Then
+                    Input.key("[pf12]")
+                end if
+            end if
+        end if
+   else
+      MsgBox("This is not the sign-in screen")
+   end if
+end sub
+
+function getPassword(user) 
+    Dim fileContents, lines, line
+    fileContents = File.read("\\192.168.0.13\Engdrawing\Inspection Logs\Scanning Files\AS400 creds\logins.txt")
+    lines = Split(fileContents, vbCrLf)
+
+    for each line in lines
+        Dim userPasswordArr
+        userPasswordArr = Split(line, "|")
+        if Trim(userPasswordArr(0)) = user Then
+            getPassword = userPasswordArr(1)
+            exit function
+        end if
+    next
+end function
+
+
+
+' default classes
+
+    Class ScreenClass
+
+    public function check(startRow, startCol, string)
+       if text(startRow, startCol, Len(string)) = string Then
+             check = true
+       else
+             check = false
+       end if
+    end function
+
+    public function text(startRow, startCol, length)
+       autECLSession.autECLOIA.WaitForInputReady
+       text = Mid(autECLSession.autECLPS.GetText(), (startCol - 1) * 80 + startRow, length)
+    end function
+
+ end Class
+
+ Class InputClass
+
+    public function chop(str, maxLength)
+       if Len(str) < maxLength Then
+          key("[fldext]")
+       end if
+    end function
+
+    public function text(string)
+       Dim strIndex
+       For strIndex = 1 To Len(string)
+             key Mid(string, strIndex, 1)
+       Next
+    end function
+
+    public function key(action)
+       autECLSession.autECLOIA.WaitForInputReady
+       autECLSession.autECLPS.SendKeys action
+    end function
+
+    public function setCursor(col, row)
+       autECLSession.autECLOIA.WaitForInputReady
+       Dim curcol, correctionCol
+       Dim currow, correctionRow
+       curcol = autECLSession.autECLPS.CursorPosCol
+       currow = autECLSession.autECLPS.CursorPosRow
+       correctionCol = col - curcol
+       correctionRow = row - currow
+       dim i
+       i = 0
+       if correctionCol > 0 Then
+             for i = 1 to correctionCol
+                key("[right]")
+             next
+       else
+             for i = 1 to correctionCol * -1
+                key("[left]")
+             next
+       end if
+
+       i = 0
+       if correctionRow > 0 Then
+             for i = 1 to correctionRow
+                key("[down]")
+                next
+             else
+             for i = 1 to correctionRow * -1
+                key("[up]")
+             next
+       end if
+    end function
+
+ end Class
+
+ Class FileClass
+
+    public function buildPath(name)
+       dim textFilePath, fso, currentDirectory
+       Set fso = CreateObject("Scripting.FileSystemObject")
+       currentDirectory = fso.GetAbsolutePathName(".")
+       textFilePath = fso.BuildPath(currentDirectory, name)
+       buildPath = textFilePath
+    end function
+
+    public function write(filePath, string)
+       Dim objFSO, objFile
+       Set objFSO = CreateObject("Scripting.FileSystemObject")
+
+       Set objFile = objFSO.CreateTextFile(filePath, True)
+
+       objFile.Write(string)
+
+       objFile.Close
+
+       Set objFile = Nothing
+       Set objFSO = Nothing
+    end function
+
+    public function read(filePath)
+       Dim objFSO, objTextFile, strContents
+
+       On Error Resume Next
+
+       Set objFSO = CreateObject("Scripting.FileSystemObject")
+       Set objTextFile = objFSO.OpenTextFile(filePath, 1)
+
+       strContents = objTextFile.ReadAll
+
+       objTextFile.Close
+       Set objTextFile = Nothing
+       Set objFSO = Nothing
+
+       ' Check if an error occurred
+       If Err.Number <> 0 Then
+          read = ""
+       Else
+          read = strContents
+       End If
+
+       On Error GoTo 0
+    end function
+
+ End Class
+

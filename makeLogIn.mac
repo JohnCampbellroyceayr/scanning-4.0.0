@@ -1,0 +1,213 @@
+[PCOMM SCRIPT HEADER]
+LANGUAGE=VBSCRIPT
+DESCRIPTION=
+[PCOMM SCRIPT SOURCE]
+OPTION EXPLICIT
+autECLSession.SetConnectionByName(ThisSessionName)
+    setUpMacro
+    sub setUpMacro()
+        autECLSession.autECLOIA.WaitForAppAvailable
+        autECLSession.autECLOIA.WaitForInputReady
+        moveToCorrectCursorPos 7, 20
+        if FindScreenText(34, 3, 13) = "CMS Main Menu" Then
+            makeLogin
+        else
+            MsgBox("Please start on the CMS Main Menu")
+        end if
+    end sub
+
+sub makeLogin()
+
+    Dim textFilePath, commands, name, element, checkTextString, checkTextXString, text, x_cords, str, index
+    textFilePath = buildFilePath("text files\makeLogin.txt")
+
+    name = InputBox("Enter name!")
+    commands = Split(InputBox("Enter 'mands!"), "-")
+    str = "function " & name & "()" & vbCrLf
+    str = str & vbtab & "Dim " & name & "Arr(" & Ubound(commands) & ")" & vbCrLf
+    index = 0
+    for each element in commands
+        str = str & vbtab & "Set " & name & "Arr(" & index & ") = Commands.create("""& Trim(FindScreenText(8, 3, 80)) & """, " & findFirstNonSpace(FindScreenText(8, 3, 80)) & ", 3, " & element & ")" & vbCrLf
+        keystroke(element)
+        keystroke("[enter]")
+        index = index + 1
+    next
+    str = str & vbtab & "if " & "Commands.execute(" & name & "Arr, Screen) <> false Then" & vbCrLf
+    str = str & vbtab & vbtab & "msgbox(""Please start at the correct screen, the CMS Main Menu"")" & vbCrLf
+    str = str & vbtab & vbtab & name & " = false" & vbCrLf
+    str = str & vbtab & "else" & vbCrLf
+    str = str & vbtab & vbtab & name & " = true" & vbCrLf
+    str = str & vbtab & "end if" & vbCrLf
+    str = str &  "end function" & vbCrLf
+    
+    writeToTextFile textFilePath, str
+    Dim objShell
+    Set objShell = CreateObject("WScript.Shell")
+    objShell.Run "notepad.exe " + textFilePath
+    logOut 1, Ubound(commands) + 1
+end sub
+    
+function findFirstNonSpace(str)
+    Dim strIndex
+    For strIndex = 1 To Len(str)
+        If Mid(str, strIndex, 1) <> " " Then
+            findFirstNonSpace = strIndex + 7
+            Exit Function
+        End If
+    Next
+end function
+
+'LOG INS / OUTS
+    function logInMaintainProductionMethods()
+    Dim logInMaintainProductionMethodsArr(3)
+    Set logInMaintainProductionMethodsArr(0) = createCommand("CMS Main Menu", 34, 3, 4)
+    Set logInMaintainProductionMethodsArr(1) = createCommand("Inventory Management Main Menu", 26, 3, 1)
+    Set logInMaintainProductionMethodsArr(2) = createCommand("Inventory Control - Main Menu", 26, 3, 1)
+    Set logInMaintainProductionMethodsArr(3) = createCommand("Inventory Master Files Menu", 27, 3, 3)
+    if executeCommands(logInMaintainProductionMethodsArr) <> false Then
+        msgbox("Please start at the correct screen, the CMS Main Menu")
+        logInMaintainProductionMethods = false
+    else
+        logInMaintainProductionMethods = true
+    end if
+    end function
+    function logOut(numF7, numF3)
+        Dim i
+        For i = 1 To numF7
+            keystroke("[pf7]")
+        Next
+        For i = 1 To numF3
+            keystroke("[pf3]")
+        Next
+        autECLSession.autECLOIA.WaitForInputReady
+        if checkScreenText(34, 3, "CMS Main Menu") = true Then
+            logOut = true
+        else
+            logOut = false
+        end if
+    end function
+'Boring functions
+    'function to fldext if nessary
+    function chop(str, maxLength)
+        if Len(str) < maxLength Then
+            keystroke("[fldext]")
+        end if
+    end function
+    ' COMMANDS
+    function createCommand(safeString, posX, posY, command)
+    Dim obj
+    Set obj = CreateObject("Scripting.Dictionary")
+    obj("keystroke") = command
+    obj("safeString") = safeString
+    obj("posX") = posX
+    obj("posY") = posY
+    Set createCommand = obj
+    end function
+    function executeCommands(commands)
+    dim command
+    for each command in commands
+        if checkAndExecuteCommand(command) = false Then
+            executeCommands = false
+            exit for
+        end if
+    next
+    end function
+    function checkAndExecuteCommand(command)
+    if checkScreenText(command("posX"), command("posY"), command("safeString")) Then
+        keystroke command("keystroke")
+        keystroke "[enter]"
+        checkAndExecuteCommand = true
+    else
+        checkAndExecuteCommand = false
+    end if
+    end function
+    ' ENTER INFO
+    function enterString(string)
+    Dim strIndex
+    For strIndex = 1 To Len(string)
+        keystroke Mid(string, strIndex, 1)
+    Next
+    end function
+    function keystroke(key)
+    autECLSession.autECLOIA.WaitForInputReady
+    autECLSession.autECLPS.SendKeys key
+    end function
+    ' SCREEN TEXT
+    function checkScreenText(startRow, startCol, text)
+    if FindScreenText(startRow, startCol, Len(text)) = text Then
+        checkScreenText = true
+    else
+        checkScreenText = false
+    end if
+    end function
+    function FindScreenText(startRow, startCol, length)
+    autECLSession.autECLOIA.WaitForInputReady
+    FindScreenText = Mid(autECLSession.autECLPS.GetText(), (startCol - 1) * 80 + startRow, length)
+    end function
+    'MOVE TO POSITION
+    function moveToCorrectCursorPos(col, row)
+    autECLSession.autECLOIA.WaitForInputReady
+    Dim curcol, correctionCol
+    Dim currow, correctionRow
+    curcol = autECLSession.autECLPS.CursorPosCol
+    currow = autECLSession.autECLPS.CursorPosRow
+    correctionCol = col - curcol
+    correctionRow = row - currow
+    dim i
+    i = 0
+    if correctionCol > 0 Then
+        for i = 1 to correctionCol
+            keystroke("[right]")
+        next
+    else
+        for i = 1 to correctionCol * -1
+            keystroke("[left]")
+        next
+    end if
+
+    i = 0
+    if correctionRow > 0 Then
+        for i = 1 to correctionRow
+            keystroke("[down]")
+            next
+    else
+        for i = 1 to correctionRow * -1
+            keystroke("[up]")
+        next
+    end if
+
+    end function
+    ' READING AND WRITING TEXT FILES
+    function buildFilePath(name)
+    dim textFilePath, fso, currentDirectory
+    Set fso = CreateObject("Scripting.FileSystemObject")
+    currentDirectory = fso.GetAbsolutePathName(".")
+    textFilePath = fso.BuildPath(currentDirectory, name)
+    buildFilePath = textFilePath
+    end function
+    function writeToTextFile(filePath, string)
+    Dim objFSO, objFile
+    Set objFSO = CreateObject("Scripting.FileSystemObject")
+
+    Set objFile = objFSO.CreateTextFile(filePath, True)
+
+    objFile.Write(string)
+
+    objFile.Close
+
+    Set objFile = Nothing
+    Set objFSO = Nothing
+    end function
+    function readTextFile(filePath)
+    Dim objFSO, objTextFile, strContents
+
+    Set objFSO = CreateObject("Scripting.FileSystemObject")
+    Set objTextFile = objFSO.OpenTextFile(filePath, 1)
+
+    strContents = objTextFile.ReadAll
+
+    objTextFile.Close
+    Set objTextFile = Nothing
+    Set objFSO = Nothing
+    readTextFile = strContents
+    end function
