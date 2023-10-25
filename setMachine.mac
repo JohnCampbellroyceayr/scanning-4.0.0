@@ -19,15 +19,23 @@ autECLSession.SetConnectionByName(ThisSessionName)
 
 
 
-Dim deviceEmployee, Employee, config
+Dim deviceEmployee, Employee, deviceMachine, Machine, config
+
 Set deviceEmployee = new JSONClass
 Set Employee = new JSONClass
+
+Set deviceMachine = new JSONClass
+Set Machine = new JSONClass
+
 Set config = new JSONClass
 
+
 deviceEmployee.Load(File.read(File.buildPath("scanning files/employee/employee.json")))
+deviceMachine.Load(File.read(File.buildPath("scanning files/machine/machine.json")))
 config.Load(File.read(File.buildPath("scanning files/config/config.json")))
 
 Employee.Load(getEmployeeServer(deviceEmployee.Object.Number))
+Machine.Load(getMachineServer(deviceEmployee.Object.CurrentMachine))
 
 begin
 sub begin()
@@ -113,25 +121,10 @@ function getMachineServer(machine)
     end if
 end function
 
-function saveMachineServer(machine)
-    if machine.Object.Machine <> "null" Then
-        Dim path, fileContent
-        path = "\\192.168.0.13\Engdrawing\Inspection Logs\Scanning Files\machines\Machines\" & machine.Object.Machine & ".json"
-        fileContent = machine.stringify()
-        File.write path, fileContent
-    end if
-end function
-
-function deleteMachineServer(machineName)
-    Dim path
-    path = "\\192.168.0.13\Engdrawing\Inspection Logs\Scanning Files\machines\Machines\" & machineName & ".json"
-    File.delete(path)
-end function
-
 sub prepareRun(startFromSignin)
     if Screen.check(34, 3, "CMS Main Menu") or startFromSignin = true Then
         Input.setCursor 7, 20
-        signOut()
+        setMachine()
     else
         MsgBox("Please start on the CMS Main Menu or Sign in menu")
     end if
@@ -140,22 +133,97 @@ function findName(number)
     findName = "false"
 end function
 
-sub signOut()
+sub setMachine()
     if Employee.Object.Number <> "null" Then
+        Dim Message, machineName
+        machineName = Machine.Object.Machine
+        Message = "Current sign-in: " & Text.displayNoneIfNull(Employee.Object.Number) & " " & Text.removeIfNull(Employee.Object.Name) & vbCrLf
+        Message = Message & "Current Machine: " & Text.displayNoneIfNull(machineName)
         Dim result
-        result = msgbox("Do you really want to" & vbCrLf & "sign-out: " & Text.displayNoneIfNull(Employee.Object.Number) & " " & Text.removeIfNull(Employee.Object.Name) & vbCrLf & "(this will automatically sign you out " & vbCrLf & "of all your jobs)", vbYesNo, "Sign-Out Confirmation")
-        If result = vbYes Then
-            logOnServer Employee.Object.Number, "Sign-Out"
-            signOutMachines(removeMachinesWithMultipleUsers(getSignedInMachines()))
-            logOut 3, 4
-            clearCurrentEmployee()
-        ElseIf result = vbNo Then
+        result = Trim(InputBox(Message, "Please Enter Machine code", Text.removeIfNull(machineName)))
+        If result <> "" Then
+            Dim machineGroup, EmployeeStr
+            machineGroup = findMachineGroup(result)
+            if machineGroup = "false" Then
+                MsgBox("Could Not Find Machine " & result)
+                exit sub
+            else
+                Dim newMachine
+                Set newMachine = new JSONClass
+                newMachine.Load(getMachineServer(result))
+                if newMachine.Object.Machine = "null" Then
+                    Machine.Object.Machine = result
+                    Machine.Object.MachineGroup = machineGroup
+                    Machine.Object.Status = "Idle"
+                else
+                    Set Machine = newMachine
+                end if
+                addEmployeeToMachines()
+                setMachineAsCurrentMachine(result)
+                File.write File.buildPath("scanning files/employee/employee.json"), Employee.stringify()
+                setEmployeeOnServer(Employee)
+                saveMachine(Machine)
+                startShift Machine.Object.Machine, Employee.Object.Number
+            end if
+        Else
             exit sub
         End If
     else
-        msgbox("No Employee Signed in")
+        msgbox("No Employee Signed in, Please sign in before selecting a machine")
     end if
 end sub
+
+sub setMachineAsCurrentMachine(machineName)
+    Dim otherMachines, otherMachinesArr, machine, str
+    otherMachines = Replace(Employee.Object.OtherMachines, "<Array>", "")
+    otherMachinesArr = Split(otherMachines, "|")
+    for each machine in otherMachinesArr
+        if machine <> "null" And Trim(machine) <> "" And machine <> machineName Then
+            str = str & machine & "|"
+        end if
+    next
+    Employee.Object.OtherMachines = "<Array>" & str & Employee.Object.CurrentMachine
+    Employee.Object.CurrentMachine = machineName 
+end sub
+
+sub addEmployeeToMachines()
+    Dim machineUsersStr, userArr, user, str
+    machineUsersStr = Replace(Machine.Object.Users, "<Array>", "")
+    userArr = Split(machineUsersStr, "|")
+    for each user in userArr
+        if user <> "null" And Trim(user) <> "" And user <> Employee.Object.Number Then
+            str = str & user & "|"
+        end if
+    next
+    str = str + Employee.Object.Number
+    Machine.Object.Users = "<Array>" & str
+end sub
+
+function findMachineGroup(machine)
+    Dim filePath, content, lines, line, machineDep, machineRes
+    filePath = "\\192.168.0.13\Engdrawing\Inspection Logs\Scanning Files\machines\MachineGroups.txt"
+    content = file.read(filePath)
+    lines = Split(content, vbCrLf)
+    Dim machineNameArr
+    machineNameArr = Split(machine, " ")
+    if Ubound(machineNameArr) > 0 Then
+        machineDep = Trim(machineNameArr(0))
+        machineRes = Trim(machineNameArr(1))
+        for each line in lines
+            If InStr(line, machineDep & vbTab & machineRes & vbTab) <> 0 Then
+                Dim lineArr
+                lineArr = Split(line, vbTab)
+                if Ubound(lineArr) < 2 Or Trim(lineArr(2)) = "" Then
+                    findMachineGroup = "null"
+                else
+                    findMachineGroup = lineArr(2)
+                end if
+            exit function
+        end if
+        next
+    end if
+    findMachineGroup = "false"
+end function
 
 function getSignedInMachines()
     Dim currentMachine, otherMachines, str, i
@@ -169,72 +237,38 @@ function getSignedInMachines()
     getSignedInMachines = Split(str, "|")
 end function
 
-function removeMachinesWithMultipleUsers(machineArr)
-    Dim i
-    for i = 0 to Ubound(machineArr) step 1
-        if machineArr(i) <> "null" Then
-            Dim machine, path, fileContent
-            Set machine = new JSONClass
-            machine.Load(getMachineServer(machineArr(i)))
-            if machineHasMoreThanOneUser(machine) Then
-                machineArr(i) = "null"
-                machine.Object.Users = removeEmployeeFromMachine(machine.Object.Users, Employee.Object.Number)
-            else
-            end if
-            path = "\\192.168.0.13\Engdrawing\Inspection Logs\Scanning Files\machines\Machines\" & machine.Object.Machine & ".json"
-            fileContent = machine.stringify()
-            File.write path, fileContent
-        end if
-    next
-    removeMachinesWithMultipleUsers = machineArr
+sub startShift(Machine, Employee)
+   if logInScanning() And logInToResource(Machine) Then
+      logMachineAsRunning(Employee)
+      logOut 3, 3
+   end if
+end sub
+
+function logMachineAsRunning(EmployeeCode)
+   if Trim(Screen.text(42, 12, 10)) = "0" Then
+      Input.text("10000")
+      Input.key("[enter]")
+      Input.key("[enter]")
+   end if
+   Input.text("10100")
+   Input.key("[enter]")
+   Input.text("20000")
+   Input.key("[enter]")
+   if screen.check(29, 11, "Tag #:") Then
+        Input.text(EmployeeCode)
+        Input.key("[enter]")
+   end if
 end function
 
-function machineHasMoreThanOneUser(machine)
-    if UBound(Split(machine.Object.Users, "|")) > 0 Then
-        machineHasMoreThanOneUser = true
+sub saveMachine(JsonObj)
+    Dim machine, filePath, localFilePath
+    machine = JsonObj.Object.Machine
+    if machine <> "null" Then
+        filePath = "\\192.168.0.13\Engdrawing\Inspection Logs\Scanning Files\machines\Machines\" & machine & ".json"
+        localFilePath = File.buildPath("scanning files/machine/machine.json")
+        File.write filePath, JsonObj.stringify()
+        File.write localFilePath, JsonObj.stringify()
     end if
-end function
-
-function removeEmployeeFromMachine(usersStr, employeeCode)
-    if InStr(usersStr, employeeCode & "|") <> 0 Then
-        usersStr = Replace(usersStr, employeeCode & "|", "")
-    end if
-    if InStr(usersStr, "|" & employeeCode) <> 0 Then
-        usersStr = Replace(usersStr, "|" & employeeCode, "")
-    end if
-    removeEmployeeFromMachine = usersStr
-end function
-
-function signOutMachines(machineArr)
-    Dim i
-    if logInScanning() Then
-        for i = 0 to Ubound(machineArr) step 1
-            if machineArr(i) <> "null" Then
-                deleteMachineServer(machineArr(i))
-                if logInToResource(machineArr(i)) Then
-                    if Trim(Screen.text(42, 12, 10)) <> "" And Trim(Screen.text(42, 12, 10)) <> "0" Then
-                        Input.setCursor 11, 21
-                        Input.text("10002")
-                        Input.key("[enter]")
-                        If Screen.check(28, 16, "Please Enter Information") Then
-                            Input.key("[enter]")
-                        end if
-                    end if
-                end if
-            end if
-        next
-    else
-        MsgBox("Something went wrong, please contact someone who knows what they are doing")
-    end if
-end function
-
-
-sub clearCurrentEmployee()
-    Dim path, noEmployeePath
-    noEmployeePath = "\\192.168.0.13\Engdrawing\Inspection Logs\Scanning Files\employees\noEmployee.json"
-    path = File.buildPath("scanning files/employee/employee.json")
-    File.write path, file.read(noEmployeePath)
-    File.delete("\\192.168.0.13\Engdrawing\Inspection Logs\Scanning Files\employees\Employees\" & Employee.Object.Number & ".json")
 end sub
 
 sub logOnServer(number, action)
@@ -278,51 +312,51 @@ end function
 
 ' for navigating menus
 
-function logOut(numF7, numF3)
-    Dim i
-    For i = 1 To numF7
-        Input.key("[pf7]")
-    Next
-    For i = 1 To numF3
-        Input.key("[pf3]")
-    Next
-    if Screen.check(34, 3, "CMS Main Menu") = true Then
-        logOut = true
-    else
-        logOut = false
-    end if
-end function
+    function logOut(numF7, numF3)
+        Dim i
+        For i = 1 To numF7
+            Input.key("[pf7]")
+        Next
+        For i = 1 To numF3
+            Input.key("[pf3]")
+        Next
+        if Screen.check(34, 3, "CMS Main Menu") = true Then
+            logOut = true
+        else
+            logOut = false
+        end if
+    end function
 
-function logInScanning()
-    Dim logInScanningArr(5)
-    Set logInScanningArr(0) = Commands.create("CMS Main Menu", 34, 3, 3)
-    Set logInScanningArr(1) = Commands.create("Production Management Main Menu", 25, 3, 8)
-    Set logInScanningArr(2) = Commands.create("Maintain Current Production - Main Menu", 21, 3, 10)
-    Set logInScanningArr(3) = Commands.create("Production Shop Floor Reporting Menu", 23, 3, 4)
-    Set logInScanningArr(4) = Commands.create("Production - Production Reporting Devices", 22, 1, "[pf1]")
-    Set logInScanningArr(5) = Commands.create("Device", 19, 4, "[pf1]")
-    if Commands.execute(logInScanningArr, Screen) <> false Then
-        msgbox("Please start at the correct screen, the CMS Main Menu")
-        logInScanning = false
-    else
-        logInScanning = true
-    end if
-end function
+    function logInScanning()
+        Dim logInScanningArr(5)
+        Set logInScanningArr(0) = Commands.create("CMS Main Menu", 34, 3, 3)
+        Set logInScanningArr(1) = Commands.create("Production Management Main Menu", 25, 3, 8)
+        Set logInScanningArr(2) = Commands.create("Maintain Current Production - Main Menu", 21, 3, 10)
+        Set logInScanningArr(3) = Commands.create("Production Shop Floor Reporting Menu", 23, 3, 4)
+        Set logInScanningArr(4) = Commands.create("Production - Production Reporting Devices", 22, 1, "[pf1]")
+        Set logInScanningArr(5) = Commands.create("Device", 19, 4, "[pf1]")
+        if Commands.execute(logInScanningArr, Screen) <> false Then
+            msgbox("Please start at the correct screen, the CMS Main Menu")
+            logInScanning = false
+        else
+            logInScanning = true
+        end if
+    end function
 
-function logInToResource(Machine)
-    if Screen.check(22, 1, "Production - Resource Activity Management") Then
-        Input.key("[pf5]")
-        if Screen.check(34, 13, "Enter") Then
-            Input.text(Replace(Machine, " ", ""))
-            Input.key("[enter]")
-            Dim check
-            check = Split(Machine, " ")
-            if Screen.check(15, 3, Trim(check(0))) And Screen.check(15, 4, check(1)) Then
-                logInToResource = true
+    function logInToResource(Machine)
+        if Screen.check(22, 1, "Production - Resource Activity Management") Then
+            Input.key("[pf5]")
+            if Screen.check(34, 13, "Enter") Then
+                Input.text(Replace(Machine, " ", ""))
+                Input.key("[enter]")
+                Dim check
+                check = Split(Machine, " ")
+                if Screen.check(15, 3, Trim(check(0))) And Screen.check(15, 4, check(1)) Then
+                    logInToResource = true
+                end if
             end if
         end if
-    end if
-end function
+    end function
 
 
 ' default classes
@@ -448,12 +482,6 @@ end function
             Values = Split(window.props, "|")
         end function
 
-        public function getArray(arrayName)
-            Dim arr, arrStr
-            arrStr = Eval("Object." & arrayName)
-            arr = Split(Replace(arrStr, "<Array>", ""), "|")
-            getArray = arr
-        end function
 
         public function stringify()
             Dim json, valuesArr
@@ -515,7 +543,7 @@ end function
         public function text(string)
         Dim strIndex
         For strIndex = 1 To Len(string)
-                key Mid(string, strIndex, 1)
+            key Mid(string, strIndex, 1)
         Next
         end function
 

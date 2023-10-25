@@ -60,14 +60,17 @@ sub signIn()
         Dim employeeIsListed
         employeeIsListed = employeeExists(newEmployee)
         if employeeIsListed <> "null" Then
-            Employee.Object.Number = newEmployee
-            Employee.Object.Name = employeeIsListed
-            If Employee.Object.Status = "null" Then
-                Employee.Object.Status = "Signed-In"
+            Employee.Load(getEmployeeServer(newEmployee))
+            If Employee.Object.Number = "null" Then
+                Employee.Object.Number = newEmployee
+                Employee.Object.Name = employeeIsListed
+                If Employee.Object.Status = "null" Then
+                    Employee.Object.Status = "Signed-In"
+                end if
+                setEmployeeOnServer(Employee)
+                logOnServer newEmployee, "Sign-in"
             end if
             File.write File.buildPath("scanning files/employee/employee.json"), Employee.stringify()
-            setEmployeeOnServer(Employee)
-            logOnServer newEmployee, "Sign-in"
         else
             MsgBox("Sorry, we could not find that employee code")
         end if
